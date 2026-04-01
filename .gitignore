@@ -1,0 +1,32 @@
+# Binary
+terraform-provider-hookbase
+
+# Test artifacts
+tests/filter_debug/
+tests/smoke/.terraform/
+tests/smoke/terraform.tfstate*
+tests/smoke/.terraform.lock.hcl
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Goreleaser
+dist/
