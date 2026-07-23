@@ -45,6 +45,7 @@ type SourceResourceModel struct {
 	DedupWindowHours        types.Int64  `tfsdk:"dedup_window_hours"`
 	DedupCustomHeader       types.String `tfsdk:"dedup_custom_header"`
 	TransientMode           types.Bool   `tfsdk:"transient_mode"`
+	AllowedMethods          types.List   `tfsdk:"allowed_methods"`
 	IngestURL               types.String `tfsdk:"ingest_url"`
 	CreatedAt               types.String `tfsdk:"created_at"`
 	UpdatedAt               types.String `tfsdk:"updated_at"`
@@ -167,6 +168,12 @@ func (r *SourceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Computed:    true,
 				Default:     booldefault.StaticBool(false),
 			},
+			"allowed_methods": schema.ListAttribute{
+				Description: "HTTP methods the ingest endpoint accepts: GET, POST, PUT, PATCH, DELETE, HEAD. " +
+					"Omit or set to an empty list to accept any method.",
+				Optional:    true,
+				ElementType: types.StringType,
+			},
 			"ingest_url": schema.StringAttribute{
 				Description: "The public URL for sending webhooks to this source.",
 				Computed:    true,
@@ -256,6 +263,7 @@ func (r *SourceResource) Create(ctx context.Context, req resource.CreateRequest,
 	resp.Diagnostics.Append(stringListToSlice(ctx, plan.IPDenylist, &createReq.IPDenylist)...)
 	resp.Diagnostics.Append(stringListToSlice(ctx, plan.EncryptFields, &createReq.EncryptFields)...)
 	resp.Diagnostics.Append(stringListToSlice(ctx, plan.MaskFields, &createReq.MaskFields)...)
+	resp.Diagnostics.Append(stringListToSlice(ctx, plan.AllowedMethods, &createReq.AllowedMethods)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -362,6 +370,7 @@ func (r *SourceResource) Update(ctx context.Context, req resource.UpdateRequest,
 	resp.Diagnostics.Append(stringListToSlice(ctx, plan.IPDenylist, &updateReq.IPDenylist)...)
 	resp.Diagnostics.Append(stringListToSlice(ctx, plan.EncryptFields, &updateReq.EncryptFields)...)
 	resp.Diagnostics.Append(stringListToSlice(ctx, plan.MaskFields, &updateReq.MaskFields)...)
+	resp.Diagnostics.Append(stringListToSlice(ctx, plan.AllowedMethods, &updateReq.AllowedMethods)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -447,6 +456,7 @@ func mapSourceToState(ctx context.Context, source *client.Source, state *SourceR
 	state.IPDenylist = sliceToStringList(ctx, source.IPDenylist, diags)
 	state.EncryptFields = sliceToStringList(ctx, source.EncryptFields, diags)
 	state.MaskFields = sliceToStringList(ctx, source.MaskFields, diags)
+	state.AllowedMethods = sliceToStringList(ctx, source.AllowedMethods, diags)
 }
 
 // Helpers used across resources

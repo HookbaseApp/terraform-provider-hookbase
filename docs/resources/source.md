@@ -53,6 +53,7 @@ resource "hookbase_source" "payments" {
 
 ### Optional
 
+- `allowed_methods` (List of String) HTTP methods the ingest endpoint accepts: GET, POST, PUT, PATCH, DELETE, HEAD. Omit or set to an empty list to accept any method.
 - `dedup_custom_header` (String) Custom header name for idempotency key dedup strategy.
 - `dedup_enabled` (Boolean) Enable event deduplication.
 - `dedup_strategy` (String) Deduplication strategy: auto, provider_id, payload_hash, idempotency_key, or none.

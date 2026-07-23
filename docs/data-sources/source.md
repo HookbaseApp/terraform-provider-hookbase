@@ -22,6 +22,7 @@ Look up an existing Hookbase source by ID or slug.
 
 ### Read-Only
 
+- `allowed_methods` (List of String)
 - `created_at` (String)
 - `dedup_enabled` (Boolean)
 - `dedup_strategy` (String)
