@@ -355,13 +355,8 @@ func (r *DestinationResource) Update(ctx context.Context, req resource.UpdateReq
 
 	mapDestinationToState(ctx, dest, &plan, &resp.Diagnostics)
 
-	// Preserve sensitive fields from plan since API redacts them in responses
-	if !plan.AuthConfig.IsNull() && !plan.AuthConfig.IsUnknown() {
-		// Already set from plan via mapDestinationToState overwrite below
-	}
-	if !plan.Config.IsNull() && !plan.Config.IsUnknown() {
-		plan.Config = plan.Config
-	}
+	// Sensitive fields (auth_config, config) are redacted in API responses; mapDestinationToState
+	// above already preserves the plan values into `plan`, so no extra copy is needed here.
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }

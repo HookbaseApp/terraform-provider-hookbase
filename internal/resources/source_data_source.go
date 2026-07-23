@@ -32,6 +32,7 @@ type SourceDataSourceModel struct {
 	DedupStrategy           types.String `tfsdk:"dedup_strategy"`
 	DedupWindowHours        types.Int64  `tfsdk:"dedup_window_hours"`
 	TransientMode           types.Bool   `tfsdk:"transient_mode"`
+	AllowedMethods          types.List   `tfsdk:"allowed_methods"`
 	CreatedAt               types.String `tfsdk:"created_at"`
 	UpdatedAt               types.String `tfsdk:"updated_at"`
 }
@@ -63,6 +64,7 @@ func (d *SourceDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 			"dedup_strategy":            schema.StringAttribute{Computed: true},
 			"dedup_window_hours":        schema.Int64Attribute{Computed: true},
 			"transient_mode":            schema.BoolAttribute{Computed: true},
+			"allowed_methods":           schema.ListAttribute{Computed: true, ElementType: types.StringType},
 			"created_at":                schema.StringAttribute{Computed: true},
 			"updated_at":                schema.StringAttribute{Computed: true},
 		},
@@ -133,4 +135,5 @@ func mapSourceToDataSourceState(ctx context.Context, source *client.Source, stat
 
 	state.IPAllowlist = sliceToStringList(ctx, source.IPAllowlist, diags)
 	state.IPDenylist = sliceToStringList(ctx, source.IPDenylist, diags)
+	state.AllowedMethods = sliceToStringList(ctx, source.AllowedMethods, diags)
 }

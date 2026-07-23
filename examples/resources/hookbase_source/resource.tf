@@ -26,3 +26,11 @@ resource "hookbase_source" "payments" {
   dedup_window_hours = 48
   transient_mode     = true  # HIPAA compliance — no payload storage
 }
+
+# Source restricted to specific HTTP methods (omit allowed_methods to accept any verb)
+resource "hookbase_source" "poller" {
+  name            = "status-poller"
+  slug            = "status-poller"
+  provider_type   = "generic"
+  allowed_methods = ["GET", "HEAD"]
+}

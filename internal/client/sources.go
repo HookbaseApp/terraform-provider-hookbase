@@ -28,6 +28,7 @@ type Source struct {
 	DedupWindowHours        int      `json:"dedupWindowHours"`
 	DedupCustomHeader       *string  `json:"dedupCustomHeader"`
 	TransientMode           bool     `json:"transientMode"`
+	AllowedMethods          []string `json:"allowedMethods"`
 	IngestURL               *string  `json:"ingestUrl,omitempty"`
 	CreatedAt               string   `json:"createdAt"`
 	UpdatedAt               string   `json:"updatedAt"`
@@ -51,6 +52,7 @@ type CreateSourceRequest struct {
 	DedupWindowHours        *int     `json:"dedupWindowHours,omitempty"`
 	DedupCustomHeader       *string  `json:"dedupCustomHeader,omitempty"`
 	TransientMode           *bool    `json:"transientMode,omitempty"`
+	AllowedMethods          []string `json:"allowedMethods,omitempty"`
 }
 
 type UpdateSourceRequest struct {
@@ -69,6 +71,7 @@ type UpdateSourceRequest struct {
 	DedupWindowHours        *int     `json:"dedupWindowHours,omitempty"`
 	DedupCustomHeader       *string  `json:"dedupCustomHeader,omitempty"`
 	TransientMode           *bool    `json:"transientMode,omitempty"`
+	AllowedMethods          []string `json:"allowedMethods,omitempty"`
 }
 
 type sourceResponse struct {

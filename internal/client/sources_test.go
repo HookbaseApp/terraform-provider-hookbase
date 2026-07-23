@@ -74,6 +74,43 @@ func TestCreateSource(t *testing.T) {
 	}
 }
 
+func TestCreateSourceAllowedMethods(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req CreateSourceRequest
+		json.Unmarshal(body, &req)
+		if got := req.AllowedMethods; len(got) != 2 || got[0] != "GET" || got[1] != "POST" {
+			t.Errorf("request AllowedMethods = %v, want [GET POST]", got)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(sourceResponse{
+			Source: Source{
+				ID:             "src_abc",
+				Name:           "Restricted",
+				Slug:           "restricted",
+				AllowedMethods: []string{"GET", "POST"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := &Client{BaseURL: srv.URL, OrganizationID: "org-1", APIKey: "key", HTTPClient: srv.Client()}
+
+	src, err := c.CreateSource(context.Background(), CreateSourceRequest{
+		Name:           "Restricted",
+		Slug:           "restricted",
+		AllowedMethods: []string{"GET", "POST"},
+	})
+	if err != nil {
+		t.Fatalf("CreateSource returned error: %v", err)
+	}
+	if got := src.AllowedMethods; len(got) != 2 || got[0] != "GET" || got[1] != "POST" {
+		t.Errorf("response AllowedMethods = %v, want [GET POST]", got)
+	}
+}
+
 func TestGetSource(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
