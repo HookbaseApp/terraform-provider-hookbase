@@ -10,6 +10,19 @@ description: |-
 
 Manages a Hookbase webhook destination.
 
+~> **Breaking change:** `rate_limit_per_minute` has been removed and replaced by the `throttle_mode` /
+`throttle_rate_limit` / `throttle_rate_unit` / `throttle_max_concurrency` / `throttle_queue_limit` attributes,
+which map to the API's `throttle` object. The old field silently no-ops against the current API (its backing
+column was dropped), so there is no data-loss risk — but any config still using `rate_limit_per_minute` must be
+updated to the `throttle_*` attributes below, or the value will simply be ignored by the API.
+
+Set `throttle_mode` to one of:
+- `"off"` (default) — no throttling.
+- `"rate"` — a fixed rate limit; requires `throttle_rate_limit` and `throttle_rate_unit`.
+- `"concurrency"` — caps concurrent in-flight deliveries; requires `throttle_max_concurrency`.
+
+`throttle_queue_limit` is optional in both `"rate"` and `"concurrency"` modes.
+
 ## Example Usage
 
 ```terraform
@@ -52,7 +65,11 @@ resource "hookbase_destination" "slack" {
 - `headers` (Map of String) Custom HTTP headers to include in deliveries.
 - `is_active` (Boolean) Whether the destination is active.
 - `method` (String) HTTP method for delivery. Defaults to POST.
-- `rate_limit_per_minute` (Number) Rate limit per minute for deliveries to this destination.
+- `throttle_max_concurrency` (Number) Maximum number of concurrent in-flight deliveries to this destination. Required when `throttle_mode` is `"concurrency"`.
+- `throttle_mode` (String) Delivery throttling mode: `"off"` (no throttling), `"rate"` (fixed rate limit, requires `throttle_rate_limit` and `throttle_rate_unit`), or `"concurrency"` (max concurrent in-flight deliveries, requires `throttle_max_concurrency`). Defaults to `"off"`.
+- `throttle_queue_limit` (Number) Maximum number of deliveries to queue while throttled. Optional for both `"rate"` and `"concurrency"` modes.
+- `throttle_rate_limit` (Number) Maximum number of deliveries per `throttle_rate_unit`. Required when `throttle_mode` is `"rate"`.
+- `throttle_rate_unit` (String) Time unit for `throttle_rate_limit`: `second`, `minute`, or `hour`. Required when `throttle_mode` is `"rate"`.
 - `timeout_ms` (Number) Delivery timeout in milliseconds.
 - `type` (String) Destination type: http, websocket, tunnel, sqs, sns, gcp_pubsub, azure_servicebus, kafka, or rabbitmq.
 - `url` (String) Destination URL to deliver webhooks to.

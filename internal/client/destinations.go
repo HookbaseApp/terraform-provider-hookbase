@@ -8,9 +8,21 @@ import (
 
 type FieldMapping struct {
 	Source  string  `json:"source"`
-	Target string  `json:"target"`
-	Type   string  `json:"type"`
+	Target  string  `json:"target"`
+	Type    string  `json:"type"`
 	Default *string `json:"default,omitempty"`
+}
+
+// Throttle configures delivery throttling for a destination. Mode is one of
+// "off", "rate", or "concurrency". RateLimit+RateUnit are required when Mode
+// is "rate"; MaxConcurrency is required when Mode is "concurrency"; QueueLimit
+// is optional in both.
+type Throttle struct {
+	Mode           string  `json:"mode"`
+	RateLimit      *int    `json:"rateLimit,omitempty"`
+	RateUnit       *string `json:"rateUnit,omitempty"`
+	MaxConcurrency *int    `json:"maxConcurrency,omitempty"`
+	QueueLimit     *int    `json:"queueLimit,omitempty"`
 }
 
 type Destination struct {
@@ -24,7 +36,7 @@ type Destination struct {
 	AuthType           *string           `json:"authType"`
 	AuthConfig         map[string]string `json:"authConfig"`
 	TimeoutMs          *int              `json:"timeoutMs"`
-	RateLimitPerMinute *int              `json:"rateLimitPerMinute"`
+	Throttle           *Throttle         `json:"throttle,omitempty"`
 	Type               string            `json:"type"`
 	Config             json.RawMessage   `json:"config"`
 	BatchSize          *int              `json:"batchSize"`
@@ -45,7 +57,7 @@ type CreateDestinationRequest struct {
 	AuthType           *string           `json:"authType,omitempty"`
 	AuthConfig         map[string]string `json:"authConfig,omitempty"`
 	TimeoutMs          *int              `json:"timeoutMs,omitempty"`
-	RateLimitPerMinute *int              `json:"rateLimitPerMinute,omitempty"`
+	Throttle           *Throttle         `json:"throttle,omitempty"`
 	Type               *string           `json:"type,omitempty"`
 	Config             json.RawMessage   `json:"config,omitempty"`
 	BatchSize          *int              `json:"batchSize,omitempty"`
@@ -62,7 +74,7 @@ type UpdateDestinationRequest struct {
 	AuthType           *string           `json:"authType,omitempty"`
 	AuthConfig         map[string]string `json:"authConfig,omitempty"`
 	TimeoutMs          *int              `json:"timeoutMs,omitempty"`
-	RateLimitPerMinute *int              `json:"rateLimitPerMinute,omitempty"`
+	Throttle           *Throttle         `json:"throttle,omitempty"`
 	Type               *string           `json:"type,omitempty"`
 	Config             json.RawMessage   `json:"config,omitempty"`
 	BatchSize          *int              `json:"batchSize,omitempty"`

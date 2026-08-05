@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -13,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hookbase/terraform-provider-hookbase/internal/client"
 )
@@ -27,24 +29,28 @@ type DestinationResource struct {
 }
 
 type DestinationResourceModel struct {
-	ID                 types.String `tfsdk:"id"`
-	Name               types.String `tfsdk:"name"`
-	Slug               types.String `tfsdk:"slug"`
-	URL                types.String `tfsdk:"url"`
-	Method             types.String `tfsdk:"method"`
-	Headers            types.Map    `tfsdk:"headers"`
-	AuthType           types.String `tfsdk:"auth_type"`
-	AuthConfig         types.Map    `tfsdk:"auth_config"`
-	TimeoutMs          types.Int64  `tfsdk:"timeout_ms"`
-	RateLimitPerMinute types.Int64  `tfsdk:"rate_limit_per_minute"`
-	Type               types.String `tfsdk:"type"`
-	Config             types.String `tfsdk:"config"`
-	BatchSize          types.Int64  `tfsdk:"batch_size"`
-	BatchWindowSeconds types.Int64  `tfsdk:"batch_window_seconds"`
-	UseStaticIP        types.Bool   `tfsdk:"use_static_ip"`
-	IsActive           types.Bool   `tfsdk:"is_active"`
-	CreatedAt          types.String `tfsdk:"created_at"`
-	UpdatedAt          types.String `tfsdk:"updated_at"`
+	ID                     types.String `tfsdk:"id"`
+	Name                   types.String `tfsdk:"name"`
+	Slug                   types.String `tfsdk:"slug"`
+	URL                    types.String `tfsdk:"url"`
+	Method                 types.String `tfsdk:"method"`
+	Headers                types.Map    `tfsdk:"headers"`
+	AuthType               types.String `tfsdk:"auth_type"`
+	AuthConfig             types.Map    `tfsdk:"auth_config"`
+	TimeoutMs              types.Int64  `tfsdk:"timeout_ms"`
+	ThrottleMode           types.String `tfsdk:"throttle_mode"`
+	ThrottleRateLimit      types.Int64  `tfsdk:"throttle_rate_limit"`
+	ThrottleRateUnit       types.String `tfsdk:"throttle_rate_unit"`
+	ThrottleMaxConcurrency types.Int64  `tfsdk:"throttle_max_concurrency"`
+	ThrottleQueueLimit     types.Int64  `tfsdk:"throttle_queue_limit"`
+	Type                   types.String `tfsdk:"type"`
+	Config                 types.String `tfsdk:"config"`
+	BatchSize              types.Int64  `tfsdk:"batch_size"`
+	BatchWindowSeconds     types.Int64  `tfsdk:"batch_window_seconds"`
+	UseStaticIP            types.Bool   `tfsdk:"use_static_ip"`
+	IsActive               types.Bool   `tfsdk:"is_active"`
+	CreatedAt              types.String `tfsdk:"created_at"`
+	UpdatedAt              types.String `tfsdk:"updated_at"`
 }
 
 func NewDestinationResource() resource.Resource {
@@ -114,8 +120,32 @@ func (r *DestinationResource) Schema(_ context.Context, _ resource.SchemaRequest
 				Computed:    true,
 				Default:     int64default.StaticInt64(30000),
 			},
-			"rate_limit_per_minute": schema.Int64Attribute{
-				Description: "Rate limit per minute for deliveries to this destination.",
+			"throttle_mode": schema.StringAttribute{
+				Description: "Delivery throttling mode: \"off\" (no throttling), \"rate\" (fixed rate limit, requires throttle_rate_limit and throttle_rate_unit), or \"concurrency\" (max concurrent in-flight deliveries, requires throttle_max_concurrency). Defaults to \"off\".",
+				Optional:    true,
+				Computed:    true,
+				Default:     stringdefault.StaticString("off"),
+				Validators: []validator.String{
+					stringvalidator.OneOf("off", "rate", "concurrency"),
+				},
+			},
+			"throttle_rate_limit": schema.Int64Attribute{
+				Description: "Maximum number of deliveries per throttle_rate_unit. Required when throttle_mode is \"rate\".",
+				Optional:    true,
+			},
+			"throttle_rate_unit": schema.StringAttribute{
+				Description: "Time unit for throttle_rate_limit: second, minute, or hour. Required when throttle_mode is \"rate\".",
+				Optional:    true,
+				Validators: []validator.String{
+					stringvalidator.OneOf("second", "minute", "hour"),
+				},
+			},
+			"throttle_max_concurrency": schema.Int64Attribute{
+				Description: "Maximum number of concurrent in-flight deliveries to this destination. Required when throttle_mode is \"concurrency\".",
+				Optional:    true,
+			},
+			"throttle_queue_limit": schema.Int64Attribute{
+				Description: "Maximum number of deliveries to queue while throttled. Optional for both \"rate\" and \"concurrency\" modes.",
 				Optional:    true,
 			},
 			"type": schema.StringAttribute{
@@ -198,10 +228,6 @@ func (r *DestinationResource) Create(ctx context.Context, req resource.CreateReq
 		v := int(plan.TimeoutMs.ValueInt64())
 		createReq.TimeoutMs = &v
 	}
-	if !plan.RateLimitPerMinute.IsNull() {
-		v := int(plan.RateLimitPerMinute.ValueInt64())
-		createReq.RateLimitPerMinute = &v
-	}
 	if !plan.Type.IsNull() {
 		v := plan.Type.ValueString()
 		createReq.Type = &v
@@ -218,6 +244,7 @@ func (r *DestinationResource) Create(ctx context.Context, req resource.CreateReq
 		v := plan.UseStaticIP.ValueBool()
 		createReq.UseStaticIP = &v
 	}
+	createReq.Throttle = throttleFromPlan(&plan)
 
 	resp.Diagnostics.Append(mapToStringMap(ctx, plan.Headers, &createReq.Headers)...)
 	resp.Diagnostics.Append(mapToStringMap(ctx, plan.AuthConfig, &createReq.AuthConfig)...)
@@ -312,10 +339,6 @@ func (r *DestinationResource) Update(ctx context.Context, req resource.UpdateReq
 		v := int(plan.TimeoutMs.ValueInt64())
 		updateReq.TimeoutMs = &v
 	}
-	if !plan.RateLimitPerMinute.IsNull() {
-		v := int(plan.RateLimitPerMinute.ValueInt64())
-		updateReq.RateLimitPerMinute = &v
-	}
 	if !plan.Type.IsNull() {
 		v := plan.Type.ValueString()
 		updateReq.Type = &v
@@ -336,6 +359,7 @@ func (r *DestinationResource) Update(ctx context.Context, req resource.UpdateReq
 		v := plan.IsActive.ValueBool()
 		updateReq.IsActive = &v
 	}
+	updateReq.Throttle = throttleFromPlan(&plan)
 
 	resp.Diagnostics.Append(mapToStringMap(ctx, plan.Headers, &updateReq.Headers)...)
 	resp.Diagnostics.Append(mapToStringMap(ctx, plan.AuthConfig, &updateReq.AuthConfig)...)
@@ -378,6 +402,30 @@ func (r *DestinationResource) ImportState(ctx context.Context, req resource.Impo
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
+// throttleFromPlan builds a client.Throttle from the throttle_* plan attributes.
+// throttle_mode is Optional+Computed with a default of "off", so it is always
+// known by the time Create/Update run; the sub-fields remain nullable.
+func throttleFromPlan(plan *DestinationResourceModel) *client.Throttle {
+	throttle := &client.Throttle{Mode: plan.ThrottleMode.ValueString()}
+	if !plan.ThrottleRateLimit.IsNull() {
+		v := int(plan.ThrottleRateLimit.ValueInt64())
+		throttle.RateLimit = &v
+	}
+	if !plan.ThrottleRateUnit.IsNull() {
+		v := plan.ThrottleRateUnit.ValueString()
+		throttle.RateUnit = &v
+	}
+	if !plan.ThrottleMaxConcurrency.IsNull() {
+		v := int(plan.ThrottleMaxConcurrency.ValueInt64())
+		throttle.MaxConcurrency = &v
+	}
+	if !plan.ThrottleQueueLimit.IsNull() {
+		v := int(plan.ThrottleQueueLimit.ValueInt64())
+		throttle.QueueLimit = &v
+	}
+	return throttle
+}
+
 func mapDestinationToState(ctx context.Context, dest *client.Destination, state *DestinationResourceModel, diags *diag.Diagnostics) {
 	state.ID = types.StringValue(dest.ID)
 	state.Name = types.StringValue(dest.Name)
@@ -403,10 +451,34 @@ func mapDestinationToState(ctx context.Context, dest *client.Destination, state 
 		state.TimeoutMs = types.Int64Value(30000)
 	}
 
-	if dest.RateLimitPerMinute != nil {
-		state.RateLimitPerMinute = types.Int64Value(int64(*dest.RateLimitPerMinute))
+	if dest.Throttle != nil {
+		state.ThrottleMode = types.StringValue(dest.Throttle.Mode)
+		if dest.Throttle.RateLimit != nil {
+			state.ThrottleRateLimit = types.Int64Value(int64(*dest.Throttle.RateLimit))
+		} else {
+			state.ThrottleRateLimit = types.Int64Null()
+		}
+		if dest.Throttle.RateUnit != nil {
+			state.ThrottleRateUnit = types.StringValue(*dest.Throttle.RateUnit)
+		} else {
+			state.ThrottleRateUnit = types.StringNull()
+		}
+		if dest.Throttle.MaxConcurrency != nil {
+			state.ThrottleMaxConcurrency = types.Int64Value(int64(*dest.Throttle.MaxConcurrency))
+		} else {
+			state.ThrottleMaxConcurrency = types.Int64Null()
+		}
+		if dest.Throttle.QueueLimit != nil {
+			state.ThrottleQueueLimit = types.Int64Value(int64(*dest.Throttle.QueueLimit))
+		} else {
+			state.ThrottleQueueLimit = types.Int64Null()
+		}
 	} else {
-		state.RateLimitPerMinute = types.Int64Null()
+		state.ThrottleMode = types.StringValue("off")
+		state.ThrottleRateLimit = types.Int64Null()
+		state.ThrottleRateUnit = types.StringNull()
+		state.ThrottleMaxConcurrency = types.Int64Null()
+		state.ThrottleQueueLimit = types.Int64Null()
 	}
 
 	state.Type = types.StringValue(dest.Type)
