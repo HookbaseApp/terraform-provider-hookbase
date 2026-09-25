@@ -30,14 +30,20 @@ import (
 //
 // "svix" is an alias of "standard-webhooks"; both are accepted and select the same scheme.
 var sourceProviders = []string{
+	"airtable",
+	"asana",
 	"bitbucket",
+	"calendly",
 	"custom",
 	"generic",
 	"github",
 	"gitlab",
 	"heroku",
+	"intercom",
 	"lemonsqueezy",
+	"notion",
 	"paddle",
+	"razorpay",
 	"sentry",
 	"shopify",
 	"slack",
@@ -46,6 +52,7 @@ var sourceProviders = []string{
 	"svix",
 	"twilio",
 	"typeform",
+	"workos",
 	"zoom",
 }
 
@@ -116,8 +123,9 @@ func (r *SourceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			},
 			"provider_type": schema.StringAttribute{
 				Description: "Webhook provider, which selects the signature scheme used to verify incoming requests: " +
-					"bitbucket, custom, generic, github, gitlab, heroku, lemonsqueezy, paddle, sentry, shopify, " +
-					"slack, standard-webhooks, stripe, svix, twilio, typeform, or zoom. Omit for a source that " +
+					"airtable, asana, bitbucket, calendly, custom, generic, github, gitlab, heroku, intercom, " +
+					"lemonsqueezy, notion, paddle, razorpay, sentry, shopify, slack, standard-webhooks, stripe, " +
+					"svix, twilio, typeform, workos, or zoom. Omit for a source that " +
 					"accepts unsigned requests. Use standard-webhooks (alias svix) for any sender built on Svix, " +
 					"including Resend and Clerk, and custom for a sender that signs the raw body with HMAC-SHA256 " +
 					"in its own header.",
