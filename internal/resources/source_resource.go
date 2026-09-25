@@ -3,6 +3,7 @@ package resources
 import (
 	"context"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -12,9 +13,41 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hookbase/terraform-provider-hookbase/internal/client"
 )
+
+// sourceProviders are the values the API accepts for a source's provider.
+//
+// Mirrors SUPPORTED_SIGNATURE_PROVIDERS in api/src/utils/signature-schemes.ts, which the API's
+// create and update schemas derive their enum from. Regenerate with
+// `npx tsx scripts/print-source-enums.ts` in the api package.
+//
+// Listed in a validator rather than only in the description so a wrong value fails at
+// `terraform plan` with the accepted set spelled out, instead of at apply with the API's bare
+// "Invalid input" — by which point the rest of the plan may already have been applied.
+//
+// "svix" is an alias of "standard-webhooks"; both are accepted and select the same scheme.
+var sourceProviders = []string{
+	"bitbucket",
+	"custom",
+	"generic",
+	"github",
+	"gitlab",
+	"heroku",
+	"lemonsqueezy",
+	"paddle",
+	"sentry",
+	"shopify",
+	"slack",
+	"standard-webhooks",
+	"stripe",
+	"svix",
+	"twilio",
+	"typeform",
+	"zoom",
+}
 
 var (
 	_ resource.Resource                = &SourceResource{}
@@ -82,8 +115,16 @@ func (r *SourceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"provider_type": schema.StringAttribute{
-				Description: "Webhook provider type: github, stripe, shopify, slack, twilio, custom, or generic.",
-				Optional:    true,
+				Description: "Webhook provider, which selects the signature scheme used to verify incoming requests: " +
+					"bitbucket, custom, generic, github, gitlab, heroku, lemonsqueezy, paddle, sentry, shopify, " +
+					"slack, standard-webhooks, stripe, svix, twilio, typeform, or zoom. Omit for a source that " +
+					"accepts unsigned requests. Use standard-webhooks (alias svix) for any sender built on Svix, " +
+					"including Resend and Clerk, and custom for a sender that signs the raw body with HMAC-SHA256 " +
+					"in its own header.",
+				Optional: true,
+				Validators: []validator.String{
+					stringvalidator.OneOf(sourceProviders...),
+				},
 			},
 			"description": schema.StringAttribute{
 				Description: "Source description.",

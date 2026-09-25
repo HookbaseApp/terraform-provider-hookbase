@@ -65,7 +65,7 @@ resource "hookbase_source" "payments" {
 - `ip_filter_mode` (String) IP filtering mode: none, allowlist, denylist, or both.
 - `is_active` (Boolean) Whether the source is active.
 - `mask_fields` (List of String) Field names to mask in the UI.
-- `provider_type` (String) Webhook provider type: github, stripe, shopify, slack, twilio, custom, or generic.
+- `provider_type` (String) Webhook provider, which selects the signature scheme used to verify incoming requests: bitbucket, custom, generic, github, gitlab, heroku, lemonsqueezy, paddle, sentry, shopify, slack, standard-webhooks, stripe, svix, twilio, typeform, or zoom. Omit for a source that accepts unsigned requests. Use standard-webhooks (alias svix) for any sender built on Svix, including Resend and Clerk, and custom for a sender that signs the raw body with HMAC-SHA256 in its own header.
 - `rate_limit_per_minute` (Number) Rate limit per minute (1-100000). Requires paid plan.
 - `reject_invalid_signatures` (Boolean) Reject webhooks with invalid signatures.
 - `signing_secret` (String, Sensitive) Webhook signing secret. Auto-generated if not provided.
