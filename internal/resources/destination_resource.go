@@ -510,7 +510,7 @@ func mapDestinationToState(ctx context.Context, dest *client.Destination, state 
 	}
 
 	// Headers
-	if dest.Headers != nil && len(dest.Headers) > 0 {
+	if len(dest.Headers) > 0 {
 		m, d := types.MapValueFrom(ctx, types.StringType, dest.Headers)
 		diags.Append(d...)
 		state.Headers = m
@@ -519,7 +519,7 @@ func mapDestinationToState(ctx context.Context, dest *client.Destination, state 
 	}
 
 	// AuthConfig — API redacts, so only set if non-empty; otherwise leave as-is (handled by caller)
-	if dest.AuthConfig != nil && len(dest.AuthConfig) > 0 {
+	if len(dest.AuthConfig) > 0 {
 		m, d := types.MapValueFrom(ctx, types.StringType, dest.AuthConfig)
 		diags.Append(d...)
 		state.AuthConfig = m
@@ -527,7 +527,7 @@ func mapDestinationToState(ctx context.Context, dest *client.Destination, state 
 	// If AuthConfig is nil/empty from API, leave state.AuthConfig unchanged (caller preserves)
 
 	// Config — API redacts, so only set if non-empty
-	if dest.Config != nil && len(dest.Config) > 0 && string(dest.Config) != "null" {
+	if len(dest.Config) > 0 && string(dest.Config) != "null" {
 		state.Config = types.StringValue(string(dest.Config))
 	}
 	// If Config is nil/empty from API, leave state.Config unchanged (caller preserves)

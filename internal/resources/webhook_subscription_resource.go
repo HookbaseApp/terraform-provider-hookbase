@@ -267,7 +267,7 @@ func mapWebhookSubscriptionToState(sub *client.WebhookSubscription, state *Webho
 		state.PriorityOverride = types.Int64Null()
 	}
 
-	if sub.LabelFilters != nil && len(sub.LabelFilters) > 0 && string(sub.LabelFilters) != "null" {
+	if len(sub.LabelFilters) > 0 && string(sub.LabelFilters) != "null" {
 		state.LabelFilters = types.StringValue(string(sub.LabelFilters))
 	} else {
 		state.LabelFilters = types.StringNull()

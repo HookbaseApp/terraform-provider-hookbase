@@ -74,7 +74,9 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body interfa
 		}
 
 		respBody, err = io.ReadAll(resp.Body)
-		resp.Body.Close()
+		// Close's error is not actionable here: the body has already been read, and the
+		// ReadAll error below is the one that tells us whether the response is usable.
+		_ = resp.Body.Close()
 		if err != nil {
 			if attempt < 2 {
 				time.Sleep(time.Duration(attempt+1) * time.Second)

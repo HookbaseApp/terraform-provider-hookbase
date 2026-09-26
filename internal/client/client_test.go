@@ -42,7 +42,7 @@ func TestSuccessfulGet(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(payload{ID: "src_1", Name: "My Source"})
+		_ = json.NewEncoder(w).Encode(payload{ID: "src_1", Name: "My Source"})
 	}))
 	defer srv.Close()
 
@@ -82,11 +82,11 @@ func TestSuccessfulPost(t *testing.T) {
 			t.Errorf("method = %q, want POST", r.Method)
 		}
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &receivedBody)
+		_ = json.Unmarshal(body, &receivedBody)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(respBody{ID: "src_new", Name: "Created"})
+		_ = json.NewEncoder(w).Encode(respBody{ID: "src_new", Name: "Created"})
 	}))
 	defer srv.Close()
 
@@ -127,11 +127,11 @@ func TestPatchRequest(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &receivedBody)
+		_ = json.Unmarshal(body, &receivedBody)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(respBody{ID: "src_1", Name: "Updated"})
+		_ = json.NewEncoder(w).Encode(respBody{ID: "src_1", Name: "Updated"})
 	}))
 	defer srv.Close()
 
@@ -186,7 +186,7 @@ func TestAPIErrorHandling(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(APIError{Error: "Bad Request"})
+		_ = json.NewEncoder(w).Encode(APIError{Error: "Bad Request"})
 	}))
 	defer srv.Close()
 
@@ -213,7 +213,7 @@ func TestNotFoundHandling(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(APIError{Error: "Not Found"})
+		_ = json.NewEncoder(w).Encode(APIError{Error: "Not Found"})
 	}))
 	defer srv.Close()
 
@@ -243,7 +243,7 @@ func TestRetryOn429(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, `{"ok":true}`)
+		_, _ = fmt.Fprint(w, `{"ok":true}`)
 	}))
 	defer srv.Close()
 
@@ -282,7 +282,7 @@ func TestRetryOn500(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, `{"ok":true}`)
+		_, _ = fmt.Fprint(w, `{"ok":true}`)
 	}))
 	defer srv.Close()
 

@@ -16,7 +16,7 @@ type paginatedSourceResponse struct {
 
 func (c *Client) GetSourceBySlug(ctx context.Context, slug string) (*Source, error) {
 	var resp paginatedSourceResponse
-	if err := c.Get(ctx, fmt.Sprintf("/sources?pageSize=100"), &resp); err != nil {
+	if err := c.Get(ctx, "/sources?pageSize=100", &resp); err != nil {
 		return nil, err
 	}
 	for _, s := range resp.Sources {
@@ -33,7 +33,7 @@ type paginatedDestinationResponse struct {
 
 func (c *Client) GetDestinationBySlug(ctx context.Context, slug string) (*Destination, error) {
 	var resp paginatedDestinationResponse
-	if err := c.Get(ctx, fmt.Sprintf("/destinations?pageSize=100"), &resp); err != nil {
+	if err := c.Get(ctx, "/destinations?pageSize=100", &resp); err != nil {
 		return nil, err
 	}
 	for _, d := range resp.Destinations {
@@ -50,7 +50,7 @@ type paginatedTransformResponse struct {
 
 func (c *Client) GetTransformBySlug(ctx context.Context, slug string) (*Transform, error) {
 	var resp paginatedTransformResponse
-	if err := c.Get(ctx, fmt.Sprintf("/transforms?pageSize=100"), &resp); err != nil {
+	if err := c.Get(ctx, "/transforms?pageSize=100", &resp); err != nil {
 		return nil, err
 	}
 	for _, t := range resp.Transforms {
@@ -67,7 +67,7 @@ type paginatedFilterResponse struct {
 
 func (c *Client) GetFilterBySlug(ctx context.Context, slug string) (*Filter, error) {
 	var resp paginatedFilterResponse
-	if err := c.Get(ctx, fmt.Sprintf("/filters?pageSize=100"), &resp); err != nil {
+	if err := c.Get(ctx, "/filters?pageSize=100", &resp); err != nil {
 		return nil, err
 	}
 	for _, f := range resp.Filters {

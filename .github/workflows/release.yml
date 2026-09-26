@@ -21,7 +21,9 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22.x"
+          # Same as the test workflow: go.mod is the single source of truth for the toolchain,
+          # so release binaries are built with the version the module actually declares.
+          go-version-file: go.mod
 
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@v6

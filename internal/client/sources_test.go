@@ -20,7 +20,7 @@ func TestCreateSource(t *testing.T) {
 
 		body, _ := io.ReadAll(r.Body)
 		var req CreateSourceRequest
-		json.Unmarshal(body, &req)
+		_ = json.Unmarshal(body, &req)
 		if req.Name != "GitHub Webhooks" {
 			t.Errorf("request Name = %q, want %q", req.Name, "GitHub Webhooks")
 		}
@@ -30,7 +30,7 @@ func TestCreateSource(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(sourceResponse{
+		_ = json.NewEncoder(w).Encode(sourceResponse{
 			Source: Source{
 				ID:             "src_abc",
 				OrganizationID: "org-1",
@@ -78,14 +78,14 @@ func TestCreateSourceAllowedMethods(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var req CreateSourceRequest
-		json.Unmarshal(body, &req)
+		_ = json.Unmarshal(body, &req)
 		if got := req.AllowedMethods; len(got) != 2 || got[0] != "GET" || got[1] != "POST" {
 			t.Errorf("request AllowedMethods = %v, want [GET POST]", got)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(sourceResponse{
+		_ = json.NewEncoder(w).Encode(sourceResponse{
 			Source: Source{
 				ID:             "src_abc",
 				Name:           "Restricted",
@@ -123,7 +123,7 @@ func TestGetSource(t *testing.T) {
 		provider := "github"
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(sourceResponse{
+		_ = json.NewEncoder(w).Encode(sourceResponse{
 			Source: Source{
 				ID:               "src_abc",
 				OrganizationID:   "org-1",
@@ -174,14 +174,14 @@ func TestUpdateSource(t *testing.T) {
 
 		body, _ := io.ReadAll(r.Body)
 		var req UpdateSourceRequest
-		json.Unmarshal(body, &req)
+		_ = json.Unmarshal(body, &req)
 		if req.Name == nil || *req.Name != "Renamed Source" {
 			t.Errorf("request Name = %v, want %q", req.Name, "Renamed Source")
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(sourceResponse{
+		_ = json.NewEncoder(w).Encode(sourceResponse{
 			Source: Source{
 				ID:             "src_abc",
 				OrganizationID: "org-1",
@@ -259,7 +259,7 @@ func TestRevealSourceSecret(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(revealSecretResponse{
+		_ = json.NewEncoder(w).Encode(revealSecretResponse{
 			SigningSecret: "whsec_supersecret123",
 		})
 	}))

@@ -532,7 +532,7 @@ func stringListToSlice(ctx context.Context, list types.List, target *[]string) d
 }
 
 func sliceToStringList(ctx context.Context, items []string, diags *diag.Diagnostics) types.List {
-	if items == nil || len(items) == 0 {
+	if len(items) == 0 {
 		return types.ListNull(types.StringType)
 	}
 	list, d := types.ListValueFrom(ctx, types.StringType, items)

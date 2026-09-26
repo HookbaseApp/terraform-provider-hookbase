@@ -488,14 +488,14 @@ func mapRouteToState(ctx context.Context, route *client.Route, state *RouteResou
 	}
 
 	// FilterConditions: JSON field
-	if route.FilterConditions != nil && len(route.FilterConditions) > 0 && string(route.FilterConditions) != "null" {
+	if len(route.FilterConditions) > 0 && string(route.FilterConditions) != "null" {
 		state.FilterConditions = types.StringValue(string(route.FilterConditions))
 	} else {
 		state.FilterConditions = types.StringNull()
 	}
 
 	// ExpectedResponse: JSON field
-	if route.ExpectedResponse != nil && len(route.ExpectedResponse) > 0 && string(route.ExpectedResponse) != "null" {
+	if len(route.ExpectedResponse) > 0 && string(route.ExpectedResponse) != "null" {
 		state.ExpectedResponse = types.StringValue(string(route.ExpectedResponse))
 	} else {
 		state.ExpectedResponse = types.StringNull()

@@ -20,7 +20,12 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22.x"
+          # Read the version from go.mod instead of restating it. The pinned "1.22.x" was
+          # four releases behind the `go 1.25.0` directive; the build steps only survived it
+          # because GOTOOLCHAIN=auto silently downloaded a newer toolchain, and golangci-lint
+          # — which type-checks with the Go version it was *built* against, not the one on
+          # PATH — had no such escape hatch.
+          go-version-file: go.mod
 
       - name: Check go mod tidy
         run: |
@@ -31,9 +36,13 @@ jobs:
         run: go vet ./...
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          # Pinned, not "latest": `latest` is what broke this step. It resolves against
+          # golangci-lint's releases, which moved on to the v2 line, while action v6 can only
+          # drive v1 — and v1's newest build cannot type-check a `go 1.25.0` module anyway.
+          # Action v9 drives v2; v2.14.0 is built with a Go newer than this module requires.
+          version: v2.14.0
 
       - name: Unit tests
         run: go test ./... -short -v
@@ -50,7 +59,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22.x"
+          go-version-file: go.mod
 
       - name: Run acceptance tests
         env:

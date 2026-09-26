@@ -270,7 +270,7 @@ func mapWebhookApplicationToState(app *client.WebhookApplication, state *Webhook
 		state.UpdatedAt = types.StringValue(app.UpdatedAt)
 	}
 
-	if app.Metadata != nil && len(app.Metadata) > 0 && string(app.Metadata) != "null" {
+	if len(app.Metadata) > 0 && string(app.Metadata) != "null" {
 		state.Metadata = types.StringValue(string(app.Metadata))
 	} else {
 		state.Metadata = types.StringNull()

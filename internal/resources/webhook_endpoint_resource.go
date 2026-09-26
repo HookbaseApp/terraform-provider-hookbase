@@ -415,19 +415,19 @@ func mapWebhookEndpointToState(ep *client.WebhookEndpoint, state *WebhookEndpoin
 		state.Secret = types.StringValue(*ep.Secret)
 	}
 
-	if ep.Headers != nil && len(ep.Headers) > 0 && string(ep.Headers) != "null" && string(ep.Headers) != "[]" {
+	if len(ep.Headers) > 0 && string(ep.Headers) != "null" && string(ep.Headers) != "[]" {
 		state.Headers = types.StringValue(string(ep.Headers))
 	} else {
 		state.Headers = types.StringNull()
 	}
 
-	if ep.SuccessStatusCodes != nil && len(ep.SuccessStatusCodes) > 0 && string(ep.SuccessStatusCodes) != "null" {
+	if len(ep.SuccessStatusCodes) > 0 && string(ep.SuccessStatusCodes) != "null" {
 		state.SuccessStatusCodes = types.StringValue(string(ep.SuccessStatusCodes))
 	} else {
 		state.SuccessStatusCodes = types.StringNull()
 	}
 
-	if ep.RetryDelays != nil && len(ep.RetryDelays) > 0 && string(ep.RetryDelays) != "null" {
+	if len(ep.RetryDelays) > 0 && string(ep.RetryDelays) != "null" {
 		state.RetryDelays = types.StringValue(string(ep.RetryDelays))
 	} else {
 		state.RetryDelays = types.StringNull()
