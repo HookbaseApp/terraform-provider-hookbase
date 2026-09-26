@@ -38,16 +38,16 @@ type CreateEventTypeRequest struct {
 }
 
 type UpdateEventTypeRequest struct {
-	DisplayName      *string `json:"displayName,omitempty"`
-	Description      *string `json:"description,omitempty"`
-	Category         *string `json:"category,omitempty"`
-	Schema           *string `json:"schema,omitempty"`
-	ExamplePayload   *string `json:"examplePayload,omitempty"`
-	DocumentationURL *string `json:"documentationUrl,omitempty"`
-	IsEnabled        *bool   `json:"isEnabled,omitempty"`
-	IsDeprecated     *bool   `json:"isDeprecated,omitempty"`
+	DisplayName       *string `json:"displayName,omitempty"`
+	Description       *string `json:"description,omitempty"`
+	Category          *string `json:"category,omitempty"`
+	Schema            *string `json:"schema,omitempty"`
+	ExamplePayload    *string `json:"examplePayload,omitempty"`
+	DocumentationURL  *string `json:"documentationUrl,omitempty"`
+	IsEnabled         *bool   `json:"isEnabled,omitempty"`
+	IsDeprecated      *bool   `json:"isDeprecated,omitempty"`
 	DeprecatedMessage *string `json:"deprecatedMessage,omitempty"`
-	DefaultPriority  *int    `json:"defaultPriority,omitempty"`
+	DefaultPriority   *int    `json:"defaultPriority,omitempty"`
 }
 
 type eventTypeResponse struct {

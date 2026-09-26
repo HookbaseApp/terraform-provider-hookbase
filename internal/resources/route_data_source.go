@@ -16,17 +16,17 @@ type RouteDataSource struct {
 }
 
 type RouteDataSourceModel struct {
-	ID              types.String `tfsdk:"id"`
-	Name            types.String `tfsdk:"name"`
-	SourceID        types.String `tfsdk:"source_id"`
-	DestinationID   types.String `tfsdk:"destination_id"`
-	FilterID        types.String `tfsdk:"filter_id"`
-	TransformID     types.String `tfsdk:"transform_id"`
-	SchemaID        types.String `tfsdk:"schema_id"`
-	Priority        types.Int64  `tfsdk:"priority"`
-	IsActive        types.Bool   `tfsdk:"is_active"`
-	CreatedAt       types.String `tfsdk:"created_at"`
-	UpdatedAt       types.String `tfsdk:"updated_at"`
+	ID            types.String `tfsdk:"id"`
+	Name          types.String `tfsdk:"name"`
+	SourceID      types.String `tfsdk:"source_id"`
+	DestinationID types.String `tfsdk:"destination_id"`
+	FilterID      types.String `tfsdk:"filter_id"`
+	TransformID   types.String `tfsdk:"transform_id"`
+	SchemaID      types.String `tfsdk:"schema_id"`
+	Priority      types.Int64  `tfsdk:"priority"`
+	IsActive      types.Bool   `tfsdk:"is_active"`
+	CreatedAt     types.String `tfsdk:"created_at"`
+	UpdatedAt     types.String `tfsdk:"updated_at"`
 }
 
 func NewRouteDataSource() datasource.DataSource {
@@ -41,17 +41,17 @@ func (d *RouteDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 	resp.Schema = schema.Schema{
 		Description: "Look up an existing Hookbase route by ID.",
 		Attributes: map[string]schema.Attribute{
-			"id":              schema.StringAttribute{Required: true, Description: "Route ID."},
-			"name":            schema.StringAttribute{Computed: true},
-			"source_id":       schema.StringAttribute{Computed: true},
-			"destination_id":  schema.StringAttribute{Computed: true},
-			"filter_id":       schema.StringAttribute{Computed: true},
-			"transform_id":    schema.StringAttribute{Computed: true},
-			"schema_id":       schema.StringAttribute{Computed: true},
-			"priority":        schema.Int64Attribute{Computed: true},
-			"is_active":       schema.BoolAttribute{Computed: true},
-			"created_at":      schema.StringAttribute{Computed: true},
-			"updated_at":      schema.StringAttribute{Computed: true},
+			"id":             schema.StringAttribute{Required: true, Description: "Route ID."},
+			"name":           schema.StringAttribute{Computed: true},
+			"source_id":      schema.StringAttribute{Computed: true},
+			"destination_id": schema.StringAttribute{Computed: true},
+			"filter_id":      schema.StringAttribute{Computed: true},
+			"transform_id":   schema.StringAttribute{Computed: true},
+			"schema_id":      schema.StringAttribute{Computed: true},
+			"priority":       schema.Int64Attribute{Computed: true},
+			"is_active":      schema.BoolAttribute{Computed: true},
+			"created_at":     schema.StringAttribute{Computed: true},
+			"updated_at":     schema.StringAttribute{Computed: true},
 		},
 	}
 }

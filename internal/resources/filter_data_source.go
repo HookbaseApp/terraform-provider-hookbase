@@ -16,14 +16,14 @@ type FilterDataSource struct {
 }
 
 type FilterDataSourceModel struct {
-	ID         types.String `tfsdk:"id"`
-	Name       types.String `tfsdk:"name"`
-	Slug       types.String `tfsdk:"slug"`
+	ID          types.String `tfsdk:"id"`
+	Name        types.String `tfsdk:"name"`
+	Slug        types.String `tfsdk:"slug"`
 	Description types.String `tfsdk:"description"`
-	Conditions types.String `tfsdk:"conditions"`
-	Logic      types.String `tfsdk:"logic"`
-	CreatedAt  types.String `tfsdk:"created_at"`
-	UpdatedAt  types.String `tfsdk:"updated_at"`
+	Conditions  types.String `tfsdk:"conditions"`
+	Logic       types.String `tfsdk:"logic"`
+	CreatedAt   types.String `tfsdk:"created_at"`
+	UpdatedAt   types.String `tfsdk:"updated_at"`
 }
 
 func NewFilterDataSource() datasource.DataSource {

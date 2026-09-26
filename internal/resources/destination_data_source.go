@@ -16,18 +16,18 @@ type DestinationDataSource struct {
 }
 
 type DestinationDataSourceModel struct {
-	ID           types.String `tfsdk:"id"`
-	Name         types.String `tfsdk:"name"`
-	Slug         types.String `tfsdk:"slug"`
-	URL          types.String `tfsdk:"url"`
-	Method       types.String `tfsdk:"method"`
-	AuthType     types.String `tfsdk:"auth_type"`
-	TimeoutMs    types.Int64  `tfsdk:"timeout_ms"`
-	Type         types.String `tfsdk:"type"`
-	UseStaticIP  types.Bool   `tfsdk:"use_static_ip"`
-	IsActive     types.Bool   `tfsdk:"is_active"`
-	CreatedAt    types.String `tfsdk:"created_at"`
-	UpdatedAt    types.String `tfsdk:"updated_at"`
+	ID          types.String `tfsdk:"id"`
+	Name        types.String `tfsdk:"name"`
+	Slug        types.String `tfsdk:"slug"`
+	URL         types.String `tfsdk:"url"`
+	Method      types.String `tfsdk:"method"`
+	AuthType    types.String `tfsdk:"auth_type"`
+	TimeoutMs   types.Int64  `tfsdk:"timeout_ms"`
+	Type        types.String `tfsdk:"type"`
+	UseStaticIP types.Bool   `tfsdk:"use_static_ip"`
+	IsActive    types.Bool   `tfsdk:"is_active"`
+	CreatedAt   types.String `tfsdk:"created_at"`
+	UpdatedAt   types.String `tfsdk:"updated_at"`
 }
 
 func NewDestinationDataSource() datasource.DataSource {

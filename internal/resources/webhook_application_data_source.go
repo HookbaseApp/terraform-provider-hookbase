@@ -39,15 +39,15 @@ func (d *WebhookApplicationDataSource) Schema(_ context.Context, _ datasource.Sc
 	resp.Schema = schema.Schema{
 		Description: "Look up an existing Hookbase webhook application by ID or external ID.",
 		Attributes: map[string]schema.Attribute{
-			"id":                   schema.StringAttribute{Optional: true, Computed: true},
-			"external_id":          schema.StringAttribute{Optional: true, Computed: true, Description: "External ID. Provide either id or external_id."},
-			"name":                 schema.StringAttribute{Computed: true},
+			"id":                    schema.StringAttribute{Optional: true, Computed: true},
+			"external_id":           schema.StringAttribute{Optional: true, Computed: true, Description: "External ID. Provide either id or external_id."},
+			"name":                  schema.StringAttribute{Computed: true},
 			"rate_limit_per_second": schema.Int64Attribute{Computed: true},
 			"rate_limit_per_minute": schema.Int64Attribute{Computed: true},
 			"rate_limit_per_hour":   schema.Int64Attribute{Computed: true},
-			"is_disabled":          schema.BoolAttribute{Computed: true},
-			"created_at":           schema.StringAttribute{Computed: true},
-			"updated_at":           schema.StringAttribute{Computed: true},
+			"is_disabled":           schema.BoolAttribute{Computed: true},
+			"created_at":            schema.StringAttribute{Computed: true},
+			"updated_at":            schema.StringAttribute{Computed: true},
 		},
 	}
 }

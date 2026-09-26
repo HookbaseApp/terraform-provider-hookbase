@@ -40,14 +40,14 @@ func (d *WebhookSubscriptionDataSource) Schema(_ context.Context, _ datasource.S
 		Description: "Look up an existing Hookbase webhook subscription by ID.",
 		Attributes: map[string]schema.Attribute{
 			"id":                schema.StringAttribute{Required: true},
-			"endpoint_id":      schema.StringAttribute{Computed: true},
-			"event_type_id":    schema.StringAttribute{Computed: true},
+			"endpoint_id":       schema.StringAttribute{Computed: true},
+			"event_type_id":     schema.StringAttribute{Computed: true},
 			"filter_expression": schema.StringAttribute{Computed: true},
 			"label_filter_mode": schema.StringAttribute{Computed: true},
-			"transform_id":     schema.StringAttribute{Computed: true},
-			"is_enabled":       schema.BoolAttribute{Computed: true},
+			"transform_id":      schema.StringAttribute{Computed: true},
+			"is_enabled":        schema.BoolAttribute{Computed: true},
 			"priority_override": schema.Int64Attribute{Computed: true},
-			"created_at":       schema.StringAttribute{Computed: true},
+			"created_at":        schema.StringAttribute{Computed: true},
 		},
 	}
 }

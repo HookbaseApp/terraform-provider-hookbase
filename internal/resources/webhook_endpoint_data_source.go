@@ -16,16 +16,16 @@ type WebhookEndpointDataSource struct {
 }
 
 type WebhookEndpointDataSourceModel struct {
-	ID              types.String `tfsdk:"id"`
-	ApplicationID   types.String `tfsdk:"application_id"`
-	URL             types.String `tfsdk:"url"`
-	Description     types.String `tfsdk:"description"`
-	TimeoutSeconds  types.Int64  `tfsdk:"timeout_seconds"`
-	IsDisabled      types.Bool   `tfsdk:"is_disabled"`
-	CircuitState    types.String `tfsdk:"circuit_state"`
-	SecretVersion   types.Int64  `tfsdk:"secret_version"`
-	CreatedAt       types.String `tfsdk:"created_at"`
-	UpdatedAt       types.String `tfsdk:"updated_at"`
+	ID             types.String `tfsdk:"id"`
+	ApplicationID  types.String `tfsdk:"application_id"`
+	URL            types.String `tfsdk:"url"`
+	Description    types.String `tfsdk:"description"`
+	TimeoutSeconds types.Int64  `tfsdk:"timeout_seconds"`
+	IsDisabled     types.Bool   `tfsdk:"is_disabled"`
+	CircuitState   types.String `tfsdk:"circuit_state"`
+	SecretVersion  types.Int64  `tfsdk:"secret_version"`
+	CreatedAt      types.String `tfsdk:"created_at"`
+	UpdatedAt      types.String `tfsdk:"updated_at"`
 }
 
 func NewWebhookEndpointDataSource() datasource.DataSource {
