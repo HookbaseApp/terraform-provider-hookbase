@@ -22,6 +22,9 @@ type SourceDataSourceModel struct {
 	Slug                    types.String `tfsdk:"slug"`
 	ProviderType            types.String `tfsdk:"provider_type"`
 	Description             types.String `tfsdk:"description"`
+	HasSigningSecret        types.Bool   `tfsdk:"has_signing_secret"`
+	VerifiesWithoutSecret   types.Bool   `tfsdk:"verifies_without_secret"`
+	AwaitingSigningSecret   types.Bool   `tfsdk:"awaiting_signing_secret"`
 	RejectInvalidSignatures types.Bool   `tfsdk:"reject_invalid_signatures"`
 	RateLimitPerMinute      types.Int64  `tfsdk:"rate_limit_per_minute"`
 	IsActive                types.Bool   `tfsdk:"is_active"`
@@ -54,6 +57,9 @@ func (d *SourceDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 			"slug":                      schema.StringAttribute{Optional: true, Computed: true, Description: "Source slug. Provide either id or slug."},
 			"provider_type":             schema.StringAttribute{Computed: true},
 			"description":               schema.StringAttribute{Computed: true},
+			"has_signing_secret":        schema.BoolAttribute{Computed: true, Description: "Whether a signing secret is stored for this source."},
+			"verifies_without_secret":   schema.BoolAttribute{Computed: true, Description: "True when the provider signs with a key it publishes (wise, wise-sandbox, aws-sns), so no signing secret is stored or needed."},
+			"awaiting_signing_secret":   schema.BoolAttribute{Computed: true, Description: "True when the provider issues its secret only after the ingest URL is registered (asana, notion) and none has been set yet."},
 			"reject_invalid_signatures": schema.BoolAttribute{Computed: true},
 			"rate_limit_per_minute":     schema.Int64Attribute{Computed: true},
 			"is_active":                 schema.BoolAttribute{Computed: true},
@@ -117,6 +123,9 @@ func mapSourceToDataSourceState(ctx context.Context, source *client.Source, stat
 	state.Slug = types.StringValue(source.Slug)
 	state.ProviderType = stringPtrToValue(source.Provider)
 	state.Description = stringPtrToValue(source.Description)
+	state.HasSigningSecret = types.BoolValue(source.HasSigningSecret)
+	state.VerifiesWithoutSecret = types.BoolValue(source.VerifiesWithoutSecret)
+	state.AwaitingSigningSecret = types.BoolValue(source.AwaitingSigningSecret)
 	state.RejectInvalidSignatures = types.BoolValue(source.RejectInvalidSignatures)
 	state.IsActive = types.BoolValue(source.IsActive)
 	state.IPFilterMode = types.StringValue(source.IPFilterMode)
