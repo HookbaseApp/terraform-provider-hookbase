@@ -34,3 +34,17 @@ resource "hookbase_source" "poller" {
   provider_type   = "generic"
   allowed_methods = ["GET", "HEAD"]
 }
+
+# WhatsApp source: Hookbase generates the Meta "Verify token" unless verify_token is set.
+# signing_secret is the Meta App Secret, which Meta issues.
+resource "hookbase_source" "whatsapp" {
+  name           = "whatsapp"
+  slug           = "whatsapp"
+  provider_type  = "whatsapp"
+  signing_secret = var.meta_app_secret
+}
+
+output "whatsapp_verify_token" {
+  value     = hookbase_source.whatsapp.verify_token
+  sensitive = true
+}

@@ -280,3 +280,57 @@ func TestRevealSourceSecret(t *testing.T) {
 		t.Errorf("secret = %q, want %q", secret, "whsec_supersecret123")
 	}
 }
+
+func TestUpdateSourceRequestNullableFields(t *testing.T) {
+	cleared := []string(nil)
+	b, err := json.Marshal(UpdateSourceRequest{
+		Description:        Null[string](),
+		Provider:           Set("stripe"),
+		RateLimitPerMinute: Null[int](),
+		IPAllowlist:        &cleared,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"description":null,"provider":"stripe","rateLimitPerMinute":null,"ipAllowlist":null}`
+	if string(b) != want {
+		t.Errorf("body = %s, want %s", b, want)
+	}
+
+	b, _ = json.Marshal(UpdateSourceRequest{})
+	if string(b) != `{}` {
+		t.Errorf("empty request body = %s, want {}", b)
+	}
+}
+
+func TestGetSourceVerifyToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/organizations/org-1/sources/src_abc/verify-token" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"verifyToken":"vt-12345678"}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{BaseURL: srv.URL, OrganizationID: "org-1", APIKey: "key", HTTPClient: srv.Client()}
+	token, err := c.GetSourceVerifyToken(context.Background(), "src_abc")
+	if err != nil {
+		t.Fatalf("GetSourceVerifyToken returned error: %v", err)
+	}
+	if token != "vt-12345678" {
+		t.Errorf("token = %q, want vt-12345678", token)
+	}
+}
+
+func TestSourceDecodesStatusFlags(t *testing.T) {
+	var src Source
+	_ = json.Unmarshal([]byte(`{"id":"s","signingSecret":null,"hasSigningSecret":false,
+		"verifiesWithoutSecret":true,"awaitingSigningSecret":false,"verifyToken":"vt-12345678"}`), &src)
+	if src.SigningSecret != nil || !src.VerifiesWithoutSecret || src.AwaitingSigningSecret {
+		t.Errorf("decoded %+v", src)
+	}
+	if src.VerifyToken == nil || *src.VerifyToken != "vt-12345678" {
+		t.Errorf("VerifyToken = %v", src.VerifyToken)
+	}
+}

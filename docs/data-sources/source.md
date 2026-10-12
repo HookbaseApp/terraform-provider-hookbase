@@ -23,11 +23,13 @@ Look up an existing Hookbase source by ID or slug.
 ### Read-Only
 
 - `allowed_methods` (List of String)
+- `awaiting_signing_secret` (Boolean) True when the provider issues its secret only after the ingest URL is registered (asana, notion) and none has been set yet.
 - `created_at` (String)
 - `dedup_enabled` (Boolean)
 - `dedup_strategy` (String)
 - `dedup_window_hours` (Number)
 - `description` (String)
+- `has_signing_secret` (Boolean) Whether a signing secret is stored for this source.
 - `ip_allowlist` (List of String)
 - `ip_denylist` (List of String)
 - `ip_filter_mode` (String)
@@ -38,3 +40,4 @@ Look up an existing Hookbase source by ID or slug.
 - `reject_invalid_signatures` (Boolean)
 - `transient_mode` (Boolean)
 - `updated_at` (String)
+- `verifies_without_secret` (Boolean) True when the provider signs with a key it publishes (wise, wise-sandbox, aws-sns), so no signing secret is stored or needed.
