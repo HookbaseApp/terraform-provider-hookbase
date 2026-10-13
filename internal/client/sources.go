@@ -13,7 +13,7 @@ type Source struct {
 	Provider       *string `json:"provider"`
 	Description    *string `json:"description"`
 	// SigningSecret is present only on the create reply (null when the provider takes no secret or
-	// the vendor issues it after registration); GET redacts it — see RevealSourceSecret.
+	// the vendor issues it and none was given); GET redacts it — see RevealSourceSecret.
 	SigningSecret      *string `json:"signingSecret,omitempty"`
 	HasSigningSecret   bool    `json:"hasSigningSecret"`
 	SigningSecretLast4 *string `json:"signingSecretLast4"`
@@ -23,8 +23,8 @@ type Source struct {
 	// VerifiesWithoutSecret: the vendor signs with a key it publishes (wise, aws-sns), so no
 	// secret is stored or needed.
 	VerifiesWithoutSecret bool `json:"verifiesWithoutSecret"`
-	// AwaitingSigningSecret: the vendor issues the secret only after the ingest URL is registered
-	// (asana, notion) and it hasn't been set yet.
+	// AwaitingSigningSecret: no secret is set and only the vendor can issue one (stripe before it's
+	// pasted, asana/notion until the ingest URL is registered).
 	AwaitingSigningSecret   bool     `json:"awaitingSigningSecret"`
 	RejectInvalidSignatures bool     `json:"rejectInvalidSignatures"`
 	RateLimitPerMinute      *int     `json:"rateLimitPerMinute"`

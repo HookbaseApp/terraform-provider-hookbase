@@ -23,7 +23,7 @@ Look up an existing Hookbase source by ID or slug.
 ### Read-Only
 
 - `allowed_methods` (List of String)
-- `awaiting_signing_secret` (Boolean) True when the provider issues its secret only after the ingest URL is registered (asana, notion) and none has been set yet.
+- `awaiting_signing_secret` (Boolean) True when no secret is set and only the vendor can issue one (e.g. stripe before it is pasted, or asana/notion until the ingest URL is registered); events are accepted unverified until it is set.
 - `created_at` (String)
 - `dedup_enabled` (Boolean)
 - `dedup_strategy` (String)

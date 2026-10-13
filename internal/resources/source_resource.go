@@ -118,8 +118,10 @@ func (r *SourceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					"or no provider) leave it unset and Hookbase generates one, which is stored in state at " +
 					"create so you can paste it into the vendor; " +
 					"for providers where the vendor issues the secret or public key (e.g. stripe, shopify, " +
-					"slack, standard-webhooks/svix, airtable, gitlab-signing-token, discord, sendgrid) it is " +
-					"required — copy it from the vendor; " +
+					"slack, standard-webhooks/svix, airtable, gitlab-signing-token, discord, sendgrid) copy it " +
+					"from the vendor — public keys and format-checked keys (standard-webhooks/svix, airtable, " +
+					"gitlab-signing-token) are rejected without it, and the rest are created with no secret " +
+					"(awaiting_signing_secret is true, events unverified) until it is set; " +
 					"asana and notion issue it only after the ingest URL is registered, so leave it unset at " +
 					"create (awaiting_signing_secret is true) and set it once received; " +
 					"wise, wise-sandbox and aws-sns verify against keys the vendor publishes, so it must be " +
@@ -166,8 +168,9 @@ func (r *SourceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"awaiting_signing_secret": schema.BoolAttribute{
-				Description: "True when the provider issues its secret only after the ingest URL is registered " +
-					"(asana, notion) and none has been set yet; events are accepted unverified until it is.",
+				Description: "True when no secret is set and only the vendor can issue one (e.g. stripe or " +
+					"shopify created without signing_secret, or asana/notion, which issue it only after the " +
+					"ingest URL is registered); events are accepted unverified until it is set.",
 				Computed: true,
 				PlanModifiers: []planmodifier.Bool{
 					boolplanmodifier.UseStateForUnknown(),
