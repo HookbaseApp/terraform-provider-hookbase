@@ -51,7 +51,7 @@ resource "hookbase_transform" "enrich_payload" {
 - `is_active` (Boolean) Whether the transform is active.
 - `output_format` (String) Output format: json, xml, or text.
 - `slug` (String) URL-safe identifier. Auto-generated from name if not provided. Changing this forces a new resource.
-- `transform_type` (String) Transform type: jsonata, xslt, liquid, or javascript.
+- `transform_type` (String) Transform type: jsonata, javascript, typescript, liquid, xslt, jmespath, jsonlogic, or jq. jq needs transform isolation enabled on the server.
 
 ### Read-Only
 
