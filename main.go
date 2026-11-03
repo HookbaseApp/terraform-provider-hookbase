@@ -17,7 +17,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		Address: "registry.terraform.io/hookbase/hookbase",
+		Address: "registry.terraform.io/HookbaseApp/hookbase",
 		Debug:   debug,
 	}
 

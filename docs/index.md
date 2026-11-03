@@ -15,7 +15,7 @@ Manage Hookbase webhook infrastructure — both inbound and outbound — as code
 terraform {
   required_providers {
     hookbase = {
-      source = "hookbase/hookbase"
+      source = "HookbaseApp/hookbase"
     }
   }
 }

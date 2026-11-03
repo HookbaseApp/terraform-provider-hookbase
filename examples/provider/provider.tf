@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     hookbase = {
-      source = "hookbase/hookbase"
+      source = "HookbaseApp/hookbase"
     }
   }
 }
