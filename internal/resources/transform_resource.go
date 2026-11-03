@@ -79,7 +79,7 @@ func (r *TransformResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Required:    true,
 			},
 			"transform_type": schema.StringAttribute{
-				Description: "Transform type: jsonata, xslt, liquid, or javascript.",
+				Description: "Transform type: jsonata, javascript, typescript, liquid, xslt, jmespath, jsonlogic, or jq. jq needs transform isolation enabled on the server.",
 				Optional:    true,
 				Computed:    true,
 				Default:     stringdefault.StaticString("jsonata"),
