@@ -7,4 +7,7 @@ resource "hookbase_webhook_endpoint" "acme_orders" {
 
   circuit_failure_threshold = 10
   circuit_cooldown_seconds  = 120
+
+  # Hold messages while the circuit is open and send them once the endpoint recovers (the default)
+  hold_on_circuit_open = true
 }

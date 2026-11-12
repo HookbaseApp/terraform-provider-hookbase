@@ -137,8 +137,9 @@ func (r *WebhookEndpointResource) Schema(_ context.Context, _ resource.SchemaReq
 			},
 			"hold_on_circuit_open": schema.BoolAttribute{
 				Description: "While the endpoint's circuit is open, hold its messages and send them once the " +
-					"endpoint recovers, instead of failing them. Defaults to true. Turning it off does not " +
-					"release messages already held; they fail on their next attempt while the circuit stays open.",
+					"endpoint recovers, instead of dead-lettering them. Defaults to true. FIFO and polling " +
+					"endpoints never hold. Turning it off does not release messages already held; they are " +
+					"dead-lettered on their next attempt while the circuit stays open.",
 				Optional: true,
 				Computed: true,
 				Default:  booldefault.StaticBool(true),

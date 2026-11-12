@@ -47,7 +47,7 @@ func (d *WebhookEndpointDataSource) Schema(_ context.Context, _ datasource.Schem
 			"description":          schema.StringAttribute{Computed: true},
 			"timeout_seconds":      schema.Int64Attribute{Computed: true},
 			"is_disabled":          schema.BoolAttribute{Computed: true},
-			"hold_on_circuit_open": schema.BoolAttribute{Computed: true, Description: "Whether the endpoint holds messages while its circuit is open instead of failing them."},
+			"hold_on_circuit_open": schema.BoolAttribute{Computed: true, Description: "Whether the endpoint holds messages while its circuit is open instead of dead-lettering them."},
 			"circuit_state":        schema.StringAttribute{Computed: true},
 			"secret_version":       schema.Int64Attribute{Computed: true},
 			"created_at":           schema.StringAttribute{Computed: true},

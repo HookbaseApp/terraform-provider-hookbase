@@ -193,7 +193,7 @@ func (r *RouteResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 			"hold_on_circuit_open": schema.BoolAttribute{
 				Description: "While the route's circuit is open, hold its deliveries and send them once the " +
-					"destination recovers, instead of failing them. Defaults to true. Turning it off does not " +
+					"destination recovers, instead of dead-lettering them. Defaults to true. Turning it off does not " +
 					"release deliveries already held; they are dead-lettered on their next attempt while the " +
 					"circuit stays open.",
 				Optional: true,

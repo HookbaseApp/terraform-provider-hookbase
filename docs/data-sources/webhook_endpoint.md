@@ -21,6 +21,7 @@ Look up an existing Hookbase webhook endpoint by ID.
 - `circuit_state` (String)
 - `created_at` (String)
 - `description` (String)
+- `hold_on_circuit_open` (Boolean) Whether the endpoint holds messages while its circuit is open instead of dead-lettering them.
 - `id` (String) The ID of this resource.
 - `is_disabled` (Boolean)
 - `secret_version` (Number)

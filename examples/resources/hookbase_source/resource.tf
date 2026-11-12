@@ -35,6 +35,17 @@ resource "hookbase_source" "poller" {
   allowed_methods = ["GET", "HEAD"]
 }
 
+# Source for a catalog vendor that has no verifier of its own (Salesforce), checked as Custom
+# HMAC. catalog_provider records the vendor, so a bridge destination does not count an IP
+# allowlist on this source as proof of the sender: Salesforce sends every customer's webhooks
+# from the same addresses.
+resource "hookbase_source" "salesforce" {
+  name             = "salesforce"
+  slug             = "salesforce"
+  provider_type    = "custom"
+  catalog_provider = "salesforce"
+}
+
 # WhatsApp source: Hookbase generates the Meta "Verify token" unless verify_token is set.
 # signing_secret is the Meta App Secret, which Meta issues.
 resource "hookbase_source" "whatsapp" {

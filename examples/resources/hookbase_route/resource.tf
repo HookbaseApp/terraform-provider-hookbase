@@ -18,3 +18,15 @@ resource "hookbase_route" "github_to_slack" {
   source_id      = hookbase_source.github.id
   destination_id = hookbase_destination.slack.id
 }
+
+# Route that dead-letters deliveries while the destination's circuit is open, instead of holding them
+# until it recovers (hold_on_circuit_open defaults to true)
+resource "hookbase_route" "audit_log" {
+  name                 = "audit-log"
+  source_id            = hookbase_source.github.id
+  destination_id       = hookbase_destination.api.id
+  hold_on_circuit_open = false
+
+  circuit_failure_threshold = 10
+  circuit_cooldown_seconds  = 300
+}

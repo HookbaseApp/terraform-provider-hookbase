@@ -176,8 +176,8 @@ func (r *DestinationResource) Schema(_ context.Context, _ resource.SchemaRequest
 			"type": schema.StringAttribute{
 				Description: "Destination type: http (the default), the queues sqs, eventbridge, servicebus, " +
 					"pubsub and oci_queue, the storage types s3, r2, gcs and azure_blob, or bridge, which " +
-					"publishes each delivery as an outbound event. Queue and storage types need a Pro plan " +
-					"or above. Changing this forces a new resource.",
+					"publishes each delivery as an outbound event. Queue and storage types need a plan that " +
+					"includes them. Changing this forces a new resource.",
 				Optional: true,
 				Computed: true,
 				Default:  stringdefault.StaticString("http"),
@@ -193,9 +193,12 @@ func (r *DestinationResource) Schema(_ context.Context, _ resource.SchemaRequest
 				Description: "JSON configuration (use jsonencode) for the queue, storage and bridge types. A " +
 					"bridge takes {eventTypeSource = \"fixed\" | \"field\", eventType, eventTypeField, " +
 					"eventTypePrefix, applicationId, allowUnverifiedSources}: a fixed eventType must name an " +
-					"enabled event type, and creating or changing a bridge also needs the events:send " +
-					"permission. Credentials in a queue or storage config are masked when read back, so " +
-					"refresh compares them only for presence; key order and formatting are ignored.",
+					"enabled event type, field reads the event type from a payload dot path, applicationId " +
+					"limits publishing to one application's endpoints, and only events whose sender the source " +
+					"verified are published unless allowUnverifiedSources is true. Creating or changing a " +
+					"bridge also needs the events:send permission. Credentials in a queue or storage config are " +
+					"masked when read back, so refresh compares them only for presence; key order and " +
+					"formatting are ignored.",
 				Optional:  true,
 				Sensitive: true,
 			},

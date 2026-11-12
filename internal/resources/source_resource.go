@@ -108,8 +108,8 @@ func (r *SourceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Optional: true,
 			},
 			"catalog_provider": schema.StringAttribute{
-				Description: "The provider-catalog entry the source is made from: an integration id from " +
-					"https://www.hookbase.app/integrations (for example github or hubspot). It records that the " +
+				Description: "The provider-catalog entry the source is made from, by its id in " +
+					"GET /api/catalog/providers (for example stripe, github or salesforce). It records that the " +
 					"sender is that vendor, whose IP addresses every customer shares, so a bridge destination " +
 					"does not count the source's IP allowlist as proof of the sender. The API rejects an id " +
 					"that is not in the catalog. Set at create only: changing it forces a new resource (and " +

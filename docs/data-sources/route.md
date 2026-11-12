@@ -24,6 +24,7 @@ Look up an existing Hookbase route by ID.
 - `created_at` (String)
 - `destination_id` (String)
 - `filter_id` (String)
+- `hold_on_circuit_open` (Boolean) Whether the route holds deliveries while its circuit is open instead of dead-lettering them.
 - `is_active` (Boolean)
 - `name` (String)
 - `priority` (Number)
