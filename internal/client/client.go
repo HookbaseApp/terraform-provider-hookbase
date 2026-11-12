@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -23,6 +25,23 @@ type APIError struct {
 	Error   string      `json:"error"`
 	Code    string      `json:"code,omitempty"`
 	Details interface{} `json:"details,omitempty"`
+}
+
+// StatusError is an error status the API answered. Its message is the API's error text, or the
+// raw body when there is none.
+type StatusError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("API error (%d): %s", e.StatusCode, e.Message)
+}
+
+// IsNotFound reports whether err is the API's 404: the object does not exist (any more).
+func IsNotFound(err error) bool {
+	var se *StatusError
+	return errors.As(err, &se) && se.StatusCode == http.StatusNotFound
 }
 
 func New(apiURL, organizationID, apiKey string) *Client {
@@ -46,7 +65,8 @@ func (c *Client) orgURL(path string) string {
 	return fmt.Sprintf("%s/api%s", c.BaseURL, path)
 }
 
-// Retries. A 429 gets more tries than other failures, and waits as long as the API's Retry-After
+// Retries. A POST is sent again only when the server cannot have acted on it (see resendable).
+// A 429 gets more tries than other failures, and waits as long as the API's Retry-After
 // says: the API's global limiter counts requests per IP in fixed one-minute windows (120 a
 // minute), so a refresh of many resources, which Terraform runs in parallel, can exhaust a window
 // and only the next one helps. Parallel requests that all waited for the same window can hit the
@@ -69,6 +89,23 @@ var wait = func(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// resendable reports whether a request can be sent again after the server may have acted on it.
+// GET, PATCH and DELETE can: a second one leaves the same result. A POST creates, and a second one
+// creates a duplicate (routes, webhook endpoints, and webhook applications without an external ID
+// have no unique key) or fails on a taken slug or name, with the first object left out of state
+// either way. A POST is sent again only when the server cannot have acted on it: a 429, which the
+// API's limiter answers before any handler runs, or a connection that never opened (neverSent).
+func resendable(method string) bool {
+	return method != http.MethodPost
+}
+
+// neverSent reports whether a request failed before a connection to the server was opened (a DNS
+// or dial failure), so the server never saw it.
+func neverSent(err error) bool {
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
+}
+
 // backoff is the wait before retry number attempt+1 when the API gives no Retry-After.
 func backoff(attempt int) time.Duration {
 	return time.Duration(attempt+1) * time.Second
@@ -83,6 +120,10 @@ func retryAfter(h http.Header, fallback time.Duration) time.Duration {
 	}
 	d := fallback
 	if secs, err := strconv.Atoi(v); err == nil && secs >= 0 {
+		// Clamped before converting: a huge value would overflow the Duration.
+		if secs > int(maxRetryAfter/time.Second) {
+			return maxRetryAfter
+		}
 		d = time.Duration(secs) * time.Second
 	} else if at, err := http.ParseTime(v); err == nil {
 		d = time.Until(at)
@@ -122,7 +163,9 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body interfa
 
 		resp, err := c.HTTPClient.Do(req)
 		if err != nil {
-			if attempt+1 < maxAttempts && ctx.Err() == nil {
+			// A timeout or a dropped connection can come after the server acted, so only a
+			// request that can be sent again is, unless it never left.
+			if (resendable(method) || neverSent(err)) && attempt+1 < maxAttempts && ctx.Err() == nil {
 				if werr := wait(ctx, backoff(attempt)); werr == nil {
 					continue
 				}
@@ -135,7 +178,7 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body interfa
 		// ReadAll error below is the one that tells us whether the response is usable.
 		_ = resp.Body.Close()
 		if err != nil {
-			if attempt+1 < maxAttempts {
+			if resendable(method) && attempt+1 < maxAttempts {
 				if werr := wait(ctx, backoff(attempt)); werr == nil {
 					continue
 				}
@@ -150,10 +193,10 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body interfa
 			retry = attempt+1 < maxRateLimitAttempts
 			retryIn = retryAfter(resp.Header, backoff(attempt))
 		case resp.StatusCode == http.StatusServiceUnavailable:
-			retry = attempt+1 < maxAttempts
+			retry = resendable(method) && attempt+1 < maxAttempts
 			retryIn = retryAfter(resp.Header, backoff(attempt))
 		case resp.StatusCode >= 500:
-			retry = attempt+1 < maxAttempts
+			retry = resendable(method) && attempt+1 < maxAttempts
 			retryIn = backoff(attempt)
 		}
 		if retry {
@@ -164,11 +207,12 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body interfa
 		}
 
 		if resp.StatusCode >= 400 {
+			msg := string(respBody)
 			var apiErr APIError
 			if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Error != "" {
-				return fmt.Errorf("API error (%d): %s", resp.StatusCode, apiErr.Error)
+				msg = apiErr.Error
 			}
-			return fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+			return &StatusError{StatusCode: resp.StatusCode, Message: msg}
 		}
 
 		break

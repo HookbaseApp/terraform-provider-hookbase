@@ -475,6 +475,9 @@ func TestRetryAfterHeader(t *testing.T) {
 		"soon":  fallback,
 		future:  30 * time.Second,
 		"  12 ": 12 * time.Second,
+		// Clamped before converting to a Duration, which would overflow.
+		"9223372036854775807": maxRetryAfter,
+		"9300000000":          maxRetryAfter,
 	} {
 		h := http.Header{}
 		if value != "" {
@@ -512,5 +515,135 @@ func TestRetryWaitStopsOnCancel(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("returned after %v, want soon after the cancel", elapsed)
+	}
+}
+
+// countingServer answers every request with status (and Retry-After, when set) and counts them.
+func countingServer(t *testing.T, status int, retryAfterHeader string, delay time.Duration) (*httptest.Server, *int32) {
+	t.Helper()
+	var n int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&n, 1)
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+		if retryAfterHeader != "" {
+			w.Header().Set("Retry-After", retryAfterHeader)
+		}
+		w.WriteHeader(status)
+		_, _ = fmt.Fprint(w, `{"error":"boom"}`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &n
+}
+
+// A POST creates. After a 5xx or a timeout the server may have created the object, and a second
+// POST would create a duplicate or fail on the taken slug, so it is sent once.
+func TestPostIsNotResentAfterTheServerMayHaveActed(t *testing.T) {
+	waitsOf(t)
+
+	srv, n := countingServer(t, http.StatusServiceUnavailable, "1", 0)
+	c := &Client{BaseURL: srv.URL, OrganizationID: "org-1", APIKey: "key", HTTPClient: srv.Client()}
+	err := c.Post(context.Background(), "/routes", map[string]string{"name": "r"}, nil)
+	if !strings.Contains(fmt.Sprint(err), "API error (503)") || atomic.LoadInt32(n) != 1 {
+		t.Errorf("POST with a 503: err = %v after %d sends, want the 503 after 1", err, atomic.LoadInt32(n))
+	}
+
+	srv, n = countingServer(t, http.StatusInternalServerError, "", 0)
+	c = &Client{BaseURL: srv.URL, OrganizationID: "org-1", APIKey: "key", HTTPClient: srv.Client()}
+	if err := c.Post(context.Background(), "/routes", nil, nil); err == nil || atomic.LoadInt32(n) != 1 {
+		t.Errorf("POST with a 500: err = %v after %d sends, want 1", err, atomic.LoadInt32(n))
+	}
+
+	srv, n = countingServer(t, http.StatusCreated, "", 300*time.Millisecond)
+	timeoutClient := srv.Client()
+	timeoutClient.Timeout = 50 * time.Millisecond
+	c = &Client{BaseURL: srv.URL, OrganizationID: "org-1", APIKey: "key", HTTPClient: timeoutClient}
+	if err := c.Post(context.Background(), "/routes", nil, nil); err == nil || atomic.LoadInt32(n) != 1 {
+		t.Errorf("POST that timed out: err = %v after %d sends, want 1", err, atomic.LoadInt32(n))
+	}
+}
+
+// A 429 comes from the API's limiter before any handler runs, so a POST is sent again after it.
+func TestPostIsResentAfter429(t *testing.T) {
+	waits := waitsOf(t)
+	var n int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&n, 1) == 1 {
+			w.Header().Set("Retry-After", "4")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprint(w, `{"route":{"id":"rt_1"}}`)
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL, OrganizationID: "org-1", APIKey: "key", HTTPClient: srv.Client()}
+	if err := c.Post(context.Background(), "/routes", nil, nil); err != nil {
+		t.Fatalf("POST after a 429: %v", err)
+	}
+	if atomic.LoadInt32(&n) != 2 || len(*waits) != 1 || (*waits)[0] != 4*time.Second {
+		t.Errorf("sends = %d, waits = %v, want 2 sends and one 4s wait", atomic.LoadInt32(&n), *waits)
+	}
+}
+
+// A POST whose connection never opened never reached the server, so it is sent again.
+func TestPostIsResentWhenTheConnectionNeverOpened(t *testing.T) {
+	waits := waitsOf(t)
+	srv := httptest.NewServer(http.NotFoundHandler())
+	url := srv.URL
+	srv.Close() // nothing listens there now: the dial is refused
+
+	c := &Client{BaseURL: url, OrganizationID: "org-1", APIKey: "key", HTTPClient: &http.Client{Timeout: time.Second}}
+	err := c.Post(context.Background(), "/routes", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "executing request") {
+		t.Fatalf("err = %v, want the dial failure", err)
+	}
+	if len(*waits) != maxAttempts-1 {
+		t.Errorf("waited %d times, want %d (a retry per attempt)", len(*waits), maxAttempts-1)
+	}
+}
+
+// GET, PATCH and DELETE leave the same result when sent twice, so a 503 is retried after the wait
+// Retry-After asks for.
+func TestGetIsRetriedAfter503WithRetryAfter(t *testing.T) {
+	waits := waitsOf(t)
+	var n int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&n, 1) == 1 {
+			w.Header().Set("Retry-After", "5")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL, OrganizationID: "org-1", APIKey: "key", HTTPClient: srv.Client()}
+	var got struct {
+		OK bool `json:"ok"`
+	}
+	if err := c.Get(context.Background(), "/test", &got); err != nil || !got.OK {
+		t.Fatalf("GET after a 503: ok=%v err=%v", got.OK, err)
+	}
+	if atomic.LoadInt32(&n) != 2 || len(*waits) != 1 || (*waits)[0] != 5*time.Second {
+		t.Errorf("sends = %d, waits = %v, want 2 sends and one 5s wait", atomic.LoadInt32(&n), *waits)
+	}
+
+	srv2, n2 := countingServer(t, http.StatusBadGateway, "", 0)
+	c = &Client{BaseURL: srv2.URL, OrganizationID: "org-1", APIKey: "key", HTTPClient: srv2.Client()}
+	if err := c.Delete(context.Background(), "/routes/rt_1"); err == nil || atomic.LoadInt32(n2) != maxAttempts {
+		t.Errorf("DELETE with a 502: err = %v after %d sends, want %d", err, atomic.LoadInt32(n2), maxAttempts)
+	}
+}
+
+func TestIsNotFound(t *testing.T) {
+	srv, _ := countingServer(t, http.StatusNotFound, "", 0)
+	c := &Client{BaseURL: srv.URL, OrganizationID: "org-1", APIKey: "key", HTTPClient: srv.Client()}
+	err := c.Get(context.Background(), "/routes/rt_1", nil)
+	if !IsNotFound(err) || err.Error() != "API error (404): boom" {
+		t.Errorf("err = %v, IsNotFound = %v", err, IsNotFound(err))
+	}
+	if IsNotFound(fmt.Errorf("wrapped: %w", &StatusError{StatusCode: 500})) || !IsNotFound(fmt.Errorf("wrapped: %w", err)) {
+		t.Error("IsNotFound must look through wrapping and match only 404")
 	}
 }

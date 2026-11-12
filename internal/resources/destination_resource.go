@@ -341,6 +341,11 @@ func (r *DestinationResource) Read(ctx context.Context, req resource.ReadRequest
 	prior := state
 
 	dest, err := r.client.GetDestination(ctx, state.ID.ValueString())
+	if client.IsNotFound(err) {
+		// Deleted outside Terraform: dropped from state, so the next plan creates it again.
+		resp.State.RemoveResource(ctx)
+		return
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading destination", err.Error())
 		return
@@ -411,7 +416,8 @@ func (r *DestinationResource) Delete(ctx context.Context, req resource.DeleteReq
 	}
 
 	err := r.client.DeleteDestination(ctx, state.ID.ValueString())
-	if err != nil {
+	// A 404 means it is already gone, which is what Delete is for.
+	if err != nil && !client.IsNotFound(err) {
 		resp.Diagnostics.AddError("Error deleting destination", err.Error())
 	}
 }

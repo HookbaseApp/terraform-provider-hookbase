@@ -180,6 +180,11 @@ func (r *WebhookSubscriptionResource) Read(ctx context.Context, req resource.Rea
 	}
 
 	sub, err := r.client.GetWebhookSubscription(ctx, state.ID.ValueString())
+	if client.IsNotFound(err) {
+		// Deleted outside Terraform: dropped from state, so the next plan creates it again.
+		resp.State.RemoveResource(ctx)
+		return
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading webhook subscription", err.Error())
 		return
@@ -240,7 +245,8 @@ func (r *WebhookSubscriptionResource) Delete(ctx context.Context, req resource.D
 	}
 
 	err := r.client.DeleteWebhookSubscription(ctx, state.ID.ValueString())
-	if err != nil {
+	// A 404 means it is already gone, which is what Delete is for.
+	if err != nil && !client.IsNotFound(err) {
 		resp.Diagnostics.AddError("Error deleting webhook subscription", err.Error())
 	}
 }
