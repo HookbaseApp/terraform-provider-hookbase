@@ -53,6 +53,11 @@ func jsonText(raw json.RawMessage) (string, bool) {
 func jsonToState(prior types.String, raw json.RawMessage, redacted bool) types.String {
 	api, ok := jsonText(raw)
 	if !ok {
+		// The API stores an empty list or object as nothing (route filter conditions, for one), so
+		// a configured [] or {} reads back as null; keep it rather than fail the apply.
+		if !prior.IsNull() && !prior.IsUnknown() && jsonEmptyContainer(prior.ValueString()) {
+			return prior
+		}
 		return types.StringNull()
 	}
 	if !prior.IsNull() && !prior.IsUnknown() && jsonEquivalent(prior.ValueString(), api, redacted) {
@@ -106,4 +111,19 @@ func jsonValuesMatch(prior, api any, redacted bool) bool {
 		// float64, bool or nil: comparable as interface values.
 		return prior == api
 	}
+}
+
+// jsonEmptyContainer reports whether text is the JSON [] or {}.
+func jsonEmptyContainer(text string) bool {
+	var v any
+	if json.Unmarshal([]byte(text), &v) != nil {
+		return false
+	}
+	switch x := v.(type) {
+	case []any:
+		return len(x) == 0
+	case map[string]any:
+		return len(x) == 0
+	}
+	return false
 }

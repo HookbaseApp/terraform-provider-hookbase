@@ -32,8 +32,11 @@ type WebhookEndpoint struct {
 	CircuitFailureThreshold int             `json:"circuitFailureThreshold"`
 	CircuitSuccessThreshold int             `json:"circuitSuccessThreshold"`
 	CircuitCooldownSeconds  int             `json:"circuitCooldownSeconds"`
-	CreatedAt               string          `json:"createdAt"`
-	UpdatedAt               string          `json:"updatedAt"`
+	// HoldOnCircuitOpen: messages wait while the endpoint's circuit is open instead of failing
+	// (API 0134). Nil from an API that predates it, which behaved as true.
+	HoldOnCircuitOpen *bool  `json:"holdOnCircuitOpen"`
+	CreatedAt         string `json:"createdAt"`
+	UpdatedAt         string `json:"updatedAt"`
 }
 
 type CreateWebhookEndpointRequest struct {
@@ -51,6 +54,7 @@ type CreateWebhookEndpointRequest struct {
 	CircuitFailureThreshold *int            `json:"circuitFailureThreshold,omitempty"`
 	CircuitSuccessThreshold *int            `json:"circuitSuccessThreshold,omitempty"`
 	CircuitCooldownSeconds  *int            `json:"circuitCooldownSeconds,omitempty"`
+	HoldOnCircuitOpen       *bool           `json:"holdOnCircuitOpen,omitempty"`
 }
 
 type UpdateWebhookEndpointRequest struct {
@@ -69,6 +73,7 @@ type UpdateWebhookEndpointRequest struct {
 	CircuitFailureThreshold *int            `json:"circuitFailureThreshold,omitempty"`
 	CircuitSuccessThreshold *int            `json:"circuitSuccessThreshold,omitempty"`
 	CircuitCooldownSeconds  *int            `json:"circuitCooldownSeconds,omitempty"`
+	HoldOnCircuitOpen       *bool           `json:"holdOnCircuitOpen,omitempty"`
 }
 
 type webhookEndpointResponse struct {

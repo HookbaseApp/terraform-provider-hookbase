@@ -387,6 +387,8 @@ func TestJSONToState(t *testing.T) {
 		{"API absent", prior, ``, false, ""},
 		{"stored JSON text null", prior, `"null"`, false, ""},
 		{"import takes the API's", types.StringNull(), `{"b": 2, "a": 1}`, false, `{"b":2,"a":1}`},
+		{"configured [] stored as nothing", types.StringValue(`[]`), `null`, false, "prior"},
+		{"configured {} stored as nothing", types.StringValue(`{ }`), ``, false, "prior"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

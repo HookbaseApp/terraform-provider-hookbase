@@ -30,8 +30,11 @@ type Route struct {
 	CircuitCooldownSeconds       *int            `json:"circuitCooldownSeconds"`
 	CircuitProbeSuccessThreshold *int            `json:"circuitProbeSuccessThreshold"`
 	CircuitFailureThreshold      *int            `json:"circuitFailureThreshold"`
-	CreatedAt                    string          `json:"createdAt"`
-	UpdatedAt                    string          `json:"updatedAt"`
+	// HoldOnCircuitOpen: deliveries wait while the route's circuit is open instead of failing
+	// (API 0134). Nil from an API that predates it, which behaved as true.
+	HoldOnCircuitOpen *bool  `json:"holdOnCircuitOpen"`
+	CreatedAt         string `json:"createdAt"`
+	UpdatedAt         string `json:"updatedAt"`
 }
 
 type CreateRouteRequest struct {
@@ -55,30 +58,43 @@ type CreateRouteRequest struct {
 	CircuitCooldownSeconds       *int            `json:"circuitCooldownSeconds,omitempty"`
 	CircuitProbeSuccessThreshold *int            `json:"circuitProbeSuccessThreshold,omitempty"`
 	CircuitFailureThreshold      *int            `json:"circuitFailureThreshold,omitempty"`
+	HoldOnCircuitOpen            *bool           `json:"holdOnCircuitOpen,omitempty"`
 }
 
+// UpdateRouteRequest is the PATCH body; a nil field is left out and keeps the stored value. The
+// API clears filterId, transformId, schemaId and notifyEmails given "", filterConditions and
+// failoverDestinationIds given [] (FailoverDestinationIds is a pointer so [] can be sent), and
+// expectedResponse given null. The circuit_* settings are not taken here: see
+// UpdateRouteCircuitConfig.
 type UpdateRouteRequest struct {
-	Name                         *string         `json:"name,omitempty"`
-	SourceID                     *string         `json:"sourceId,omitempty"`
-	DestinationID                *string         `json:"destinationId,omitempty"`
-	FilterID                     *string         `json:"filterId,omitempty"`
-	FilterConditions             json.RawMessage `json:"filterConditions,omitempty"`
-	FilterLogic                  *string         `json:"filterLogic,omitempty"`
-	TransformID                  *string         `json:"transformId,omitempty"`
-	SchemaID                     *string         `json:"schemaId,omitempty"`
-	Priority                     *int            `json:"priority,omitempty"`
-	IsActive                     *bool           `json:"isActive,omitempty"`
-	NotifyOnFailure              *bool           `json:"notifyOnFailure,omitempty"`
-	NotifyOnSuccess              *bool           `json:"notifyOnSuccess,omitempty"`
-	NotifyOnRecovery             *bool           `json:"notifyOnRecovery,omitempty"`
-	NotifyEmails                 *string         `json:"notifyEmails,omitempty"`
-	FailureThreshold             *int            `json:"failureThreshold,omitempty"`
-	FailoverDestinationIds       []string        `json:"failoverDestinationIds,omitempty"`
-	FailoverAfterAttempts        *int            `json:"failoverAfterAttempts,omitempty"`
-	ExpectedResponse             json.RawMessage `json:"expectedResponse,omitempty"`
-	CircuitCooldownSeconds       *int            `json:"circuitCooldownSeconds,omitempty"`
-	CircuitProbeSuccessThreshold *int            `json:"circuitProbeSuccessThreshold,omitempty"`
-	CircuitFailureThreshold      *int            `json:"circuitFailureThreshold,omitempty"`
+	Name                   *string         `json:"name,omitempty"`
+	SourceID               *string         `json:"sourceId,omitempty"`
+	DestinationID          *string         `json:"destinationId,omitempty"`
+	FilterID               *string         `json:"filterId,omitempty"`
+	FilterConditions       json.RawMessage `json:"filterConditions,omitempty"`
+	FilterLogic            *string         `json:"filterLogic,omitempty"`
+	TransformID            *string         `json:"transformId,omitempty"`
+	SchemaID               *string         `json:"schemaId,omitempty"`
+	Priority               *int            `json:"priority,omitempty"`
+	IsActive               *bool           `json:"isActive,omitempty"`
+	NotifyOnFailure        *bool           `json:"notifyOnFailure,omitempty"`
+	NotifyOnSuccess        *bool           `json:"notifyOnSuccess,omitempty"`
+	NotifyOnRecovery       *bool           `json:"notifyOnRecovery,omitempty"`
+	NotifyEmails           *string         `json:"notifyEmails,omitempty"`
+	FailureThreshold       *int            `json:"failureThreshold,omitempty"`
+	FailoverDestinationIds *[]string       `json:"failoverDestinationIds,omitempty"`
+	FailoverAfterAttempts  *int            `json:"failoverAfterAttempts,omitempty"`
+	ExpectedResponse       json.RawMessage `json:"expectedResponse,omitempty"`
+	HoldOnCircuitOpen      *bool           `json:"holdOnCircuitOpen,omitempty"`
+}
+
+// RouteCircuitConfig is the body of PATCH /routes/:id/circuit-config. The API needs the
+// circuit_breaker plan feature, checks the ranges (cooldown 30-3600 s, failure threshold 1-50,
+// probe success threshold 1-10), and has no way to clear a value.
+type RouteCircuitConfig struct {
+	CircuitCooldownSeconds       *int `json:"circuitCooldownSeconds,omitempty"`
+	CircuitProbeSuccessThreshold *int `json:"circuitProbeSuccessThreshold,omitempty"`
+	CircuitFailureThreshold      *int `json:"circuitFailureThreshold,omitempty"`
 }
 
 type routeResponse struct {
@@ -101,12 +117,16 @@ func (c *Client) GetRoute(ctx context.Context, id string) (*Route, error) {
 	return &resp.Route, nil
 }
 
-func (c *Client) UpdateRoute(ctx context.Context, id string, req UpdateRouteRequest) (*Route, error) {
-	var resp routeResponse
-	if err := c.Patch(ctx, fmt.Sprintf("/routes/%s", id), req, &resp); err != nil {
-		return nil, err
-	}
-	return &resp.Route, nil
+// UpdateRoute sends the PATCH. The API answers {success: true} with no route, so callers read it
+// back with GetRoute.
+func (c *Client) UpdateRoute(ctx context.Context, id string, req UpdateRouteRequest) error {
+	return c.Patch(ctx, fmt.Sprintf("/routes/%s", id), req, nil)
+}
+
+// UpdateRouteCircuitConfig changes a route's circuit breaker settings, which PATCH /routes/:id
+// ignores.
+func (c *Client) UpdateRouteCircuitConfig(ctx context.Context, id string, req RouteCircuitConfig) error {
+	return c.Patch(ctx, fmt.Sprintf("/routes/%s/circuit-config", id), req, nil)
 }
 
 func (c *Client) DeleteRoute(ctx context.Context, id string) error {

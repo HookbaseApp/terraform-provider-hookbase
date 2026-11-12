@@ -41,6 +41,7 @@ type WebhookEndpointResourceModel struct {
 	CircuitFailureThreshold types.Int64  `tfsdk:"circuit_failure_threshold"`
 	CircuitSuccessThreshold types.Int64  `tfsdk:"circuit_success_threshold"`
 	CircuitCooldownSeconds  types.Int64  `tfsdk:"circuit_cooldown_seconds"`
+	HoldOnCircuitOpen       types.Bool   `tfsdk:"hold_on_circuit_open"`
 	IsDisabled              types.Bool   `tfsdk:"is_disabled"`
 	DisabledReason          types.String `tfsdk:"disabled_reason"`
 	Secret                  types.String `tfsdk:"secret"`
@@ -133,6 +134,14 @@ func (r *WebhookEndpointResource) Schema(_ context.Context, _ resource.SchemaReq
 				Optional:    true,
 				Computed:    true,
 				Default:     int64default.StaticInt64(60),
+			},
+			"hold_on_circuit_open": schema.BoolAttribute{
+				Description: "While the endpoint's circuit is open, hold its messages and send them once the " +
+					"endpoint recovers, instead of failing them. Defaults to true. Turning it off does not " +
+					"release messages already held; they fail on their next attempt while the circuit stays open.",
+				Optional: true,
+				Computed: true,
+				Default:  booldefault.StaticBool(true),
 			},
 			"is_disabled": schema.BoolAttribute{
 				Description: "Whether the endpoint is disabled.",
@@ -233,6 +242,8 @@ func (r *WebhookEndpointResource) Create(ctx context.Context, req resource.Creat
 		v := int(plan.CircuitCooldownSeconds.ValueInt64())
 		createReq.CircuitCooldownSeconds = &v
 	}
+	// Always sent, so the API's default can never differ from the schema's.
+	createReq.HoldOnCircuitOpen = holdOnCircuitOpenValue(plan.HoldOnCircuitOpen)
 
 	endpoint, err := r.client.CreateWebhookEndpoint(ctx, createReq)
 	if err != nil {
@@ -350,6 +361,7 @@ func (r *WebhookEndpointResource) Update(ctx context.Context, req resource.Updat
 		v := int(plan.CircuitCooldownSeconds.ValueInt64())
 		updateReq.CircuitCooldownSeconds = &v
 	}
+	updateReq.HoldOnCircuitOpen = holdOnCircuitOpenValue(plan.HoldOnCircuitOpen)
 
 	endpoint, err := r.client.UpdateWebhookEndpoint(ctx, plan.ID.ValueString(), updateReq)
 	if err != nil {
@@ -400,6 +412,7 @@ func mapWebhookEndpointToState(ep *client.WebhookEndpoint, state *WebhookEndpoin
 	state.CircuitFailureThreshold = types.Int64Value(int64(ep.CircuitFailureThreshold))
 	state.CircuitSuccessThreshold = types.Int64Value(int64(ep.CircuitSuccessThreshold))
 	state.CircuitCooldownSeconds = types.Int64Value(int64(ep.CircuitCooldownSeconds))
+	state.HoldOnCircuitOpen = types.BoolValue(ep.HoldOnCircuitOpen == nil || *ep.HoldOnCircuitOpen)
 	state.IsDisabled = types.BoolValue(ep.IsDisabled)
 	state.DisabledReason = stringPtrToValue(ep.DisabledReason)
 	state.SecretVersion = types.Int64Value(int64(ep.SecretVersion))
@@ -432,4 +445,11 @@ func mapWebhookEndpointToState(ep *client.WebhookEndpoint, state *WebhookEndpoin
 	} else {
 		state.RetryDelays = types.StringNull()
 	}
+}
+
+// holdOnCircuitOpenValue is hold_on_circuit_open for a create or update body: the planned value,
+// or the default (true) if the plan has none. The attribute has a default, so a plan always has one.
+func holdOnCircuitOpenValue(v types.Bool) *bool {
+	hold := v.IsNull() || v.IsUnknown() || v.ValueBool()
+	return &hold
 }
