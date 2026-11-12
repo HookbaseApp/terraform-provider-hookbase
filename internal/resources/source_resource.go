@@ -588,11 +588,11 @@ func mapSourceToState(ctx context.Context, source *client.Source, state *SourceR
 		state.RateLimitPerMinute = types.Int64Null()
 	}
 
-	state.IPAllowlist = sliceToStringList(ctx, source.IPAllowlist, diags)
-	state.IPDenylist = sliceToStringList(ctx, source.IPDenylist, diags)
-	state.EncryptFields = sliceToStringList(ctx, source.EncryptFields, diags)
-	state.MaskFields = sliceToStringList(ctx, source.MaskFields, diags)
-	state.AllowedMethods = sliceToStringList(ctx, source.AllowedMethods, diags)
+	state.IPAllowlist = listToState(ctx, source.IPAllowlist, state.IPAllowlist, diags)
+	state.IPDenylist = listToState(ctx, source.IPDenylist, state.IPDenylist, diags)
+	state.EncryptFields = listToState(ctx, source.EncryptFields, state.EncryptFields, diags)
+	state.MaskFields = listToState(ctx, source.MaskFields, state.MaskFields, diags)
+	state.AllowedMethods = listToState(ctx, source.AllowedMethods, state.AllowedMethods, diags)
 }
 
 // Request-building helpers: known* return nil (omit) for a null or unknown value; nullable*
@@ -687,4 +687,16 @@ func sliceToStringList(ctx context.Context, items []string, diags *diag.Diagnost
 	list, d := types.ListValueFrom(ctx, types.StringType, items)
 	diags.Append(d...)
 	return list
+}
+
+// listToState reads a list the API reports for an Optional attribute. The API answers [] both for
+// a list that was never set and for one set to [], so an empty answer keeps prior (the planned
+// value, or the state being refreshed) when that is itself an empty list, and is null otherwise.
+// Reading an explicit [] back as null failed the apply with "Provider produced inconsistent
+// result after apply".
+func listToState(ctx context.Context, items []string, prior types.List, diags *diag.Diagnostics) types.List {
+	if len(items) == 0 && !prior.IsNull() && !prior.IsUnknown() && len(prior.Elements()) == 0 {
+		return prior
+	}
+	return sliceToStringList(ctx, items, diags)
 }

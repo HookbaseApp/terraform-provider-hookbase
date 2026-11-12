@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -611,4 +612,61 @@ func TestSourceModifyPlan_ProviderChange(t *testing.T) {
 			t.Errorf("signing_secret = %v, want generated", got.SigningSecret)
 		}
 	})
+}
+
+// An explicitly empty list (ip_allowlist = []) must come back as an empty list, not null: the API
+// answers [] whether the list was never set or set to [], and reading that as null made Terraform
+// fail the apply with "Provider produced inconsistent result after apply".
+func TestSourceEmptyListsSurviveApplyAndRefresh(t *testing.T) {
+	ctx := context.Background()
+	empty := types.ListValueMust(types.StringType, []attr.Value{})
+
+	src := baseSource("github")
+	src.HasSigningSecret = true
+	// The API's shape: every list is a JSON array, [] when unset.
+	src.IPAllowlist, src.IPDenylist, src.EncryptFields, src.MaskFields, src.AllowedMethods =
+		[]string{}, []string{}, []string{}, []string{}, []string{}
+	reply := src
+	reply.SigningSecret = strp("generated-secret")
+	f := &fakeSourceAPI{t: t, createReply: reply, source: src, secret: "generated-secret"}
+	r := newTestSourceResource(t, f)
+
+	m := newSourceModel("s", "s")
+	m.ProviderType = types.StringValue("github")
+	m.IPAllowlist, m.IPDenylist, m.EncryptFields, m.MaskFields, m.AllowedMethods = empty, empty, empty, empty, empty
+
+	createResp := resource.CreateResponse{State: emptyState(t, r)}
+	r.Create(ctx, resource.CreateRequest{Plan: planFrom(t, r, m)}, &createResp)
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("Create: %v", createResp.Diagnostics)
+	}
+	created := readModel(t, createResp.State)
+	checkEmpty := func(stage string, got SourceResourceModel) {
+		t.Helper()
+		for name, l := range map[string]types.List{
+			"ip_allowlist": got.IPAllowlist, "ip_denylist": got.IPDenylist, "encrypt_fields": got.EncryptFields,
+			"mask_fields": got.MaskFields, "allowed_methods": got.AllowedMethods,
+		} {
+			if !l.Equal(empty) {
+				t.Errorf("%s: %s = %v, want []", stage, name, l)
+			}
+		}
+	}
+	checkEmpty("after create", created)
+
+	readResp := resource.ReadResponse{State: emptyState(t, r)}
+	r.Read(ctx, resource.ReadRequest{State: createResp.State}, &readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read: %v", readResp.Diagnostics)
+	}
+	checkEmpty("after refresh", readModel(t, readResp.State))
+
+	plan := created
+	plan.Name = types.StringValue("renamed")
+	updateResp := resource.UpdateResponse{State: emptyState(t, r)}
+	r.Update(ctx, resource.UpdateRequest{Plan: planFrom(t, r, plan), State: createResp.State}, &updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("Update: %v", updateResp.Diagnostics)
+	}
+	checkEmpty("after update", readModel(t, updateResp.State))
 }
