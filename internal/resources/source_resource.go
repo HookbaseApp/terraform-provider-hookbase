@@ -41,6 +41,7 @@ type SourceResourceModel struct {
 	Name                    types.String `tfsdk:"name"`
 	Slug                    types.String `tfsdk:"slug"`
 	ProviderType            types.String `tfsdk:"provider_type"`
+	CatalogProvider         types.String `tfsdk:"catalog_provider"`
 	Description             types.String `tfsdk:"description"`
 	SigningSecret           types.String `tfsdk:"signing_secret"`
 	VerifyToken             types.String `tfsdk:"verify_token"`
@@ -105,6 +106,26 @@ func (r *SourceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					"in place; switching to a provider whose secret the vendor issues needs signing_secret set " +
 					"in the same change.",
 				Optional: true,
+			},
+			"catalog_provider": schema.StringAttribute{
+				Description: "The provider-catalog entry the source is made from: an integration id from " +
+					"https://www.hookbase.app/integrations (for example github or hubspot). It records that the " +
+					"sender is that vendor, whose IP addresses every customer shares, so a bridge destination " +
+					"does not count the source's IP allowlist as proof of the sender. The API rejects an id " +
+					"that is not in the catalog. Set at create only: changing it forces a new resource (and " +
+					"so a new signing secret), and removing it from configuration keeps the recorded value. " +
+					"Null when the source was not made from a catalog entry.",
+				Optional: true,
+				Computed: true,
+				Validators: []validator.String{
+					stringvalidator.LengthBetween(1, 100),
+				},
+				PlanModifiers: []planmodifier.String{
+					// First, so an unset value plans as the recorded one rather than unknown, which
+					// RequiresReplace would read as a change.
+					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"description": schema.StringAttribute{
 				Description: "Source description.",
@@ -477,6 +498,7 @@ func buildCreateSourceRequest(ctx context.Context, plan SourceResourceModel) (cl
 	}
 
 	createReq.Provider = knownString(plan.ProviderType)
+	createReq.CatalogProvider = knownString(plan.CatalogProvider)
 	createReq.Description = knownString(plan.Description)
 	createReq.SigningSecret = knownString(plan.SigningSecret)
 	createReq.VerifyToken = knownString(plan.VerifyToken)
@@ -562,6 +584,7 @@ func mapSourceToState(ctx context.Context, source *client.Source, state *SourceR
 	state.Name = types.StringValue(source.Name)
 	state.Slug = types.StringValue(source.Slug)
 	state.ProviderType = stringPtrToValue(source.Provider)
+	state.CatalogProvider = stringPtrToValue(source.CatalogProvider)
 	state.Description = stringPtrToValue(source.Description)
 	state.HasSigningSecret = types.BoolValue(source.HasSigningSecret)
 	state.VerifiesWithoutSecret = types.BoolValue(source.VerifiesWithoutSecret)

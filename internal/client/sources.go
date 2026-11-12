@@ -11,7 +11,10 @@ type Source struct {
 	Name           string  `json:"name"`
 	Slug           string  `json:"slug"`
 	Provider       *string `json:"provider"`
-	Description    *string `json:"description"`
+	// CatalogProvider is the provider-catalog entry the source was made from, or nil. Set on create
+	// only: the API refuses it on PATCH.
+	CatalogProvider *string `json:"catalogProvider"`
+	Description     *string `json:"description"`
 	// SigningSecret is present only on the create reply (null when the provider takes no secret or
 	// the vendor issues it and none was given); GET redacts it — see RevealSourceSecret.
 	SigningSecret      *string `json:"signingSecret,omitempty"`
@@ -65,12 +68,14 @@ type CreateSourceRequest struct {
 	DedupCustomHeader       *string  `json:"dedupCustomHeader,omitempty"`
 	TransientMode           *bool    `json:"transientMode,omitempty"`
 	AllowedMethods          []string `json:"allowedMethods,omitempty"`
+	CatalogProvider         *string  `json:"catalogProvider,omitempty"`
 }
 
 // UpdateSourceRequest is the PATCH body. A nil field is omitted and leaves the stored value alone.
 // The API treats JSON null as "clear" for its nullable fields, which a plain omitempty pointer
 // can never send, so those fields are double pointers (and pointers to slices): a non-nil outer
-// pointer to a nil value marshals as null. Use Set/Null to build them.
+// pointer to a nil value marshals as null. Use Set/Null to build them. catalogProvider has no
+// field: the API sets it at create only and answers 400 to a PATCH that carries it.
 type UpdateSourceRequest struct {
 	Name                    *string   `json:"name,omitempty"`
 	Description             **string  `json:"description,omitempty"`

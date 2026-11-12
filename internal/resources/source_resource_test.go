@@ -10,7 +10,10 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -26,6 +29,7 @@ func newSourceModel(name, slug string) SourceResourceModel {
 		Name:                    types.StringValue(name),
 		Slug:                    types.StringValue(slug),
 		ProviderType:            types.StringNull(),
+		CatalogProvider:         types.StringUnknown(),
 		Description:             types.StringNull(),
 		SigningSecret:           types.StringUnknown(),
 		VerifyToken:             types.StringUnknown(),
@@ -380,6 +384,7 @@ func appliedModel() SourceResourceModel {
 	m := newSourceModel("s", "s")
 	m.ID = types.StringValue("src_1")
 	m.ProviderType = types.StringValue("github")
+	m.CatalogProvider = types.StringNull()
 	m.Description = types.StringValue("old description")
 	m.RateLimitPerMinute = types.Int64Value(60)
 	m.SigningSecret = types.StringValue("generated")
@@ -669,4 +674,95 @@ func TestSourceEmptyListsSurviveApplyAndRefresh(t *testing.T) {
 		t.Fatalf("Update: %v", updateResp.Diagnostics)
 	}
 	checkEmpty("after update", readModel(t, updateResp.State))
+}
+
+func TestSourceCatalogProviderIsSentOnCreateOnly(t *testing.T) {
+	src := baseSource("hubspot")
+	src.CatalogProvider = strp("hubspot")
+	src.HasSigningSecret = true
+	reply := src
+	reply.SigningSecret = strp("client-secret")
+	f := &fakeSourceAPI{t: t, createReply: reply, source: src}
+	r := newTestSourceResource(t, f)
+
+	m := newSourceModel("s", "s")
+	m.ProviderType = types.StringValue("hubspot")
+	m.CatalogProvider = types.StringValue("hubspot")
+	m.SigningSecret = types.StringValue("client-secret")
+	resp := resource.CreateResponse{State: emptyState(t, r)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: planFrom(t, r, m)}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Create: %v", resp.Diagnostics)
+	}
+	if f.lastCreate["catalogProvider"] != "hubspot" {
+		t.Errorf("create body catalogProvider = %v, want hubspot", f.lastCreate["catalogProvider"])
+	}
+	got := readModel(t, resp.State)
+	if got.CatalogProvider.ValueString() != "hubspot" {
+		t.Errorf("catalog_provider = %v, want hubspot", got.CatalogProvider)
+	}
+
+	// The API answers 400 to a PATCH carrying catalogProvider, so no update body may have it.
+	plan := got
+	plan.Name = types.StringValue("renamed")
+	if _, ok := marshalUpdate(t, plan, got)["catalogProvider"]; ok {
+		t.Error("update body carried catalogProvider")
+	}
+
+	// Unset, it is left out of the create body and read back as the API's null.
+	f2 := &fakeSourceAPI{t: t, createReply: baseSource(""), source: baseSource("")}
+	r2 := newTestSourceResource(t, f2)
+	resp2 := resource.CreateResponse{State: emptyState(t, r2)}
+	r2.Create(context.Background(), resource.CreateRequest{Plan: planFrom(t, r2, newSourceModel("s", "s"))}, &resp2)
+	if resp2.Diagnostics.HasError() {
+		t.Fatalf("Create: %v", resp2.Diagnostics)
+	}
+	if _, sent := f2.lastCreate["catalogProvider"]; sent {
+		t.Error("create body carried catalogProvider for an unset attribute")
+	}
+	if got := readModel(t, resp2.State); !got.CatalogProvider.IsNull() {
+		t.Errorf("catalog_provider = %v, want null", got.CatalogProvider)
+	}
+}
+
+// catalog_provider's plan modifiers: an unset value plans as the recorded one (so an import or a
+// dashboard-made source is not replaced), and only a real change forces replacement.
+func TestSourceCatalogProviderPlan(t *testing.T) {
+	ctx := context.Background()
+	r := &SourceResource{}
+	s := sourceSchema(t, r).Schema
+	attrSchema := s.Attributes["catalog_provider"].(schema.StringAttribute)
+
+	run := func(state, plan, config types.String) planmodifier.StringResponse {
+		t.Helper()
+		st := appliedModel()
+		st.CatalogProvider = state
+		pl := st
+		pl.CatalogProvider = plan
+		req := planmodifier.StringRequest{
+			Path:        path.Root("catalog_provider"),
+			StateValue:  state,
+			PlanValue:   plan,
+			ConfigValue: config,
+			State:       stateFrom(t, r, st),
+			Plan:        planFrom(t, r, pl),
+		}
+		resp := planmodifier.StringResponse{PlanValue: plan}
+		for _, m := range attrSchema.PlanModifiers {
+			m.PlanModifyString(ctx, req, &resp)
+			req.PlanValue = resp.PlanValue
+		}
+		return resp
+	}
+
+	if resp := run(types.StringValue("github"), types.StringUnknown(), types.StringNull()); resp.RequiresReplace ||
+		resp.PlanValue.ValueString() != "github" {
+		t.Errorf("unset: plan=%v replace=%v, want github and no replace", resp.PlanValue, resp.RequiresReplace)
+	}
+	if resp := run(types.StringNull(), types.StringUnknown(), types.StringNull()); resp.RequiresReplace || !resp.PlanValue.IsNull() {
+		t.Errorf("unset and never recorded: plan=%v replace=%v, want null and no replace", resp.PlanValue, resp.RequiresReplace)
+	}
+	if resp := run(types.StringValue("github"), types.StringValue("gitlab"), types.StringValue("gitlab")); !resp.RequiresReplace {
+		t.Error("changed: no replace")
+	}
 }
