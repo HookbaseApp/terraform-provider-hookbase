@@ -178,7 +178,24 @@ resource "hookbase_destination" "test" {
 					resource.TestCheckResourceAttr("hookbase_destination.test", "method", "POST"),
 					resource.TestCheckResourceAttr("hookbase_destination.test", "type", "http"),
 					resource.TestCheckResourceAttr("hookbase_destination.test", "is_active", "true"),
+					resource.TestCheckResourceAttr("hookbase_destination.test", "has_signing_secret", "true"),
+					resource.TestCheckResourceAttrSet("hookbase_destination.test", "signing_secret"),
 					resource.TestCheckResourceAttrSet("hookbase_destination.test", "created_at"),
+				),
+			},
+			{
+				// PATCH answers {success:true}; the rename must still leave a complete state.
+				Config: testAccProviderConfig + fmt.Sprintf(`
+resource "hookbase_destination" "test" {
+  name = "tf-acc-test-dest-renamed"
+  slug = %q
+  url  = "https://httpbin.org/post"
+}
+`, slug),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("hookbase_destination.test", "name", "tf-acc-test-dest-renamed"),
+					resource.TestCheckResourceAttr("hookbase_destination.test", "url", "https://httpbin.org/post"),
+					resource.TestCheckResourceAttrSet("hookbase_destination.test", "signing_secret"),
 				),
 			},
 		},

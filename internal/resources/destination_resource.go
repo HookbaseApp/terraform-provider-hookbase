@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
@@ -20,9 +21,22 @@ import (
 )
 
 var (
-	_ resource.Resource                = &DestinationResource{}
-	_ resource.ResourceWithImportState = &DestinationResource{}
+	_ resource.Resource                   = &DestinationResource{}
+	_ resource.ResourceWithImportState    = &DestinationResource{}
+	_ resource.ResourceWithValidateConfig = &DestinationResource{}
 )
+
+// destinationTypes are the API's DESTINATION_TYPES (api/src/routes/destinations.ts).
+var destinationTypes = []string{
+	"http", "sqs", "eventbridge", "servicebus", "pubsub", "oci_queue",
+	"s3", "r2", "gcs", "azure_blob", "bridge",
+}
+
+// destinationConfigRedacted reports whether the API masks credentials in this type's config on
+// read: the queue and storage types (isQueueType / isWarehouseType in the API).
+func destinationConfigRedacted(destType string) bool {
+	return destType != "http" && destType != "bridge"
+}
 
 type DestinationResource struct {
 	client *client.Client
@@ -49,6 +63,8 @@ type DestinationResourceModel struct {
 	BatchWindowSeconds     types.Int64  `tfsdk:"batch_window_seconds"`
 	UseStaticIP            types.Bool   `tfsdk:"use_static_ip"`
 	IsActive               types.Bool   `tfsdk:"is_active"`
+	SigningSecret          types.String `tfsdk:"signing_secret"`
+	HasSigningSecret       types.Bool   `tfsdk:"has_signing_secret"`
 	CreatedAt              types.String `tfsdk:"created_at"`
 	UpdatedAt              types.String `tfsdk:"updated_at"`
 }
@@ -84,8 +100,14 @@ func (r *DestinationResource) Schema(_ context.Context, _ resource.SchemaRequest
 				},
 			},
 			"url": schema.StringAttribute{
-				Description: "Destination URL to deliver webhooks to.",
-				Optional:    true,
+				Description: "Destination URL to deliver webhooks to. Required for http destinations. Leave it " +
+					"unset for queue and storage types, which deliver through config, and for bridge " +
+					"destinations, which take no URL.",
+				Optional: true,
+				Validators: []validator.String{
+					// The API stores "" for "no URL" and reads it back as null, so "" could never match.
+					stringvalidator.LengthAtLeast(1),
+				},
 			},
 			"method": schema.StringAttribute{
 				Description: "HTTP method for delivery. Defaults to POST.",
@@ -99,10 +121,13 @@ func (r *DestinationResource) Schema(_ context.Context, _ resource.SchemaRequest
 				ElementType: types.StringType,
 			},
 			"auth_type": schema.StringAttribute{
-				Description: "Authentication type: none, basic, bearer, api_key, oauth2, or custom.",
+				Description: "Authentication type: none, basic, bearer, api_key, or custom_header. Defaults to none.",
 				Optional:    true,
 				Computed:    true,
 				Default:     stringdefault.StaticString("none"),
+				Validators: []validator.String{
+					stringvalidator.OneOf("none", "basic", "bearer", "api_key", "custom_header"),
+				},
 			},
 			"auth_config": schema.MapAttribute{
 				Description: "Authentication configuration. Sensitive — API redacts this on read.",
@@ -149,15 +174,30 @@ func (r *DestinationResource) Schema(_ context.Context, _ resource.SchemaRequest
 				Optional:    true,
 			},
 			"type": schema.StringAttribute{
-				Description: "Destination type: http, websocket, tunnel, sqs, sns, gcp_pubsub, azure_servicebus, kafka, or rabbitmq.",
-				Optional:    true,
-				Computed:    true,
-				Default:     stringdefault.StaticString("http"),
+				Description: "Destination type: http (the default), the queues sqs, eventbridge, servicebus, " +
+					"pubsub and oci_queue, the storage types s3, r2, gcs and azure_blob, or bridge, which " +
+					"publishes each delivery as an outbound event. Queue and storage types need a Pro plan " +
+					"or above. Changing this forces a new resource.",
+				Optional: true,
+				Computed: true,
+				Default:  stringdefault.StaticString("http"),
+				Validators: []validator.String{
+					stringvalidator.OneOf(destinationTypes...),
+				},
+				PlanModifiers: []planmodifier.String{
+					// The API refuses to change a destination's type.
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"config": schema.StringAttribute{
-				Description: "JSON configuration for non-HTTP destination types. Sensitive — API redacts this on read.",
-				Optional:    true,
-				Sensitive:   true,
+				Description: "JSON configuration (use jsonencode) for the queue, storage and bridge types. A " +
+					"bridge takes {eventTypeSource = \"fixed\" | \"field\", eventType, eventTypeField, " +
+					"eventTypePrefix, applicationId, allowUnverifiedSources}: a fixed eventType must name an " +
+					"enabled event type, and creating or changing a bridge also needs the events:send " +
+					"permission. Credentials in a queue or storage config are masked when read back, so " +
+					"refresh compares them only for presence; key order and formatting are ignored.",
+				Optional:  true,
+				Sensitive: true,
 			},
 			"batch_size": schema.Int64Attribute{
 				Description: "Number of events to batch per delivery.",
@@ -178,6 +218,24 @@ func (r *DestinationResource) Schema(_ context.Context, _ resource.SchemaRequest
 				Optional:    true,
 				Computed:    true,
 				Default:     booldefault.StaticBool(true),
+			},
+			"signing_secret": schema.StringAttribute{
+				Description: "The secret Hookbase signs this destination's deliveries with (http destinations " +
+					"only), for the receiver to verify the webhook-signature header. Hookbase generates it at " +
+					"create; it is refreshed from the API on read. Null for other types. Rotate it in the " +
+					"dashboard or API, not here.",
+				Computed:  true,
+				Sensitive: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"has_signing_secret": schema.BoolAttribute{
+				Description: "Whether the destination signs its deliveries (true for http destinations).",
+				Computed:    true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"created_at": schema.StringAttribute{
 				Description: "Creation timestamp.",
@@ -203,6 +261,28 @@ func (r *DestinationResource) Configure(_ context.Context, req resource.Configur
 	r.client = c
 }
 
+// ValidateConfig checks what the API would reject about url at apply, at plan time instead: an
+// http destination needs one, and a bridge takes none.
+func (r *DestinationResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var destType, url types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("type"), &destType)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("url"), &url)...)
+	if resp.Diagnostics.HasError() || destType.IsUnknown() || url.IsUnknown() {
+		return
+	}
+	t := "http"
+	if !destType.IsNull() {
+		t = destType.ValueString()
+	}
+	switch {
+	case t == "http" && url.IsNull():
+		resp.Diagnostics.AddAttributeError(path.Root("url"), "Missing url", "An http destination needs a url to deliver to.")
+	case t == "bridge" && !url.IsNull():
+		resp.Diagnostics.AddAttributeError(path.Root("url"), "Unexpected url",
+			"A bridge destination publishes outbound events and takes no url.")
+	}
+}
+
 func (r *DestinationResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan DestinationResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -210,73 +290,39 @@ func (r *DestinationResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
-	createReq := client.CreateDestinationRequest{
-		Name: plan.Name.ValueString(),
-		Slug: plan.Slug.ValueString(),
-		URL:  plan.URL.ValueString(),
-	}
-
-	if !plan.Method.IsNull() {
-		v := plan.Method.ValueString()
-		createReq.Method = &v
-	}
-	if !plan.AuthType.IsNull() {
-		v := plan.AuthType.ValueString()
-		createReq.AuthType = &v
-	}
-	if !plan.TimeoutMs.IsNull() {
-		v := int(plan.TimeoutMs.ValueInt64())
-		createReq.TimeoutMs = &v
-	}
-	if !plan.Type.IsNull() {
-		v := plan.Type.ValueString()
-		createReq.Type = &v
-	}
-	if !plan.BatchSize.IsNull() {
-		v := int(plan.BatchSize.ValueInt64())
-		createReq.BatchSize = &v
-	}
-	if !plan.BatchWindowSeconds.IsNull() {
-		v := int(plan.BatchWindowSeconds.ValueInt64())
-		createReq.BatchWindowSeconds = &v
-	}
-	if !plan.UseStaticIP.IsNull() {
-		v := plan.UseStaticIP.ValueBool()
-		createReq.UseStaticIP = &v
-	}
-	createReq.Throttle = throttleFromPlan(&plan)
-
-	resp.Diagnostics.Append(mapToStringMap(ctx, plan.Headers, &createReq.Headers)...)
-	resp.Diagnostics.Append(mapToStringMap(ctx, plan.AuthConfig, &createReq.AuthConfig)...)
+	createReq, diags := buildCreateDestinationRequest(ctx, &plan)
+	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if !plan.Config.IsNull() && !plan.Config.IsUnknown() {
-		createReq.Config = json.RawMessage(plan.Config.ValueString())
-	}
-
-	dest, err := r.client.CreateDestination(ctx, createReq)
+	created, err := r.client.CreateDestination(ctx, createReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating destination", err.Error())
 		return
 	}
 
-	// Save sensitive fields from create response (redacted on read)
-	savedAuthConfig := dest.AuthConfig
-	savedConfig := dest.Config
-
 	// Re-read to get full object with timestamps
-	dest, err = r.client.GetDestination(ctx, dest.ID)
+	dest, err := r.client.GetDestination(ctx, created.ID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading destination after create", err.Error())
 		return
 	}
-	dest.AuthConfig = savedAuthConfig
-	dest.Config = savedConfig
 
+	// config and auth_config keep their planned values (mapDestinationToState leaves them alone):
+	// the API masks credentials in both and re-encodes config, and Terraform requires the applied
+	// value to match the plan.
 	mapDestinationToState(ctx, dest, &plan, &resp.Diagnostics)
-
+	if plan.AuthConfig.IsUnknown() {
+		plan.AuthConfig = authConfigFromAPI(ctx, dest, &resp.Diagnostics)
+	}
+	// The create reply is the one moment the API returns the signing secret without a reveal call.
+	// Null for queue, storage and bridge destinations, which don't sign.
+	if secret := nonEmpty(created.SigningSecret); secret != nil {
+		plan.SigningSecret = types.StringValue(*secret)
+	} else {
+		plan.SigningSecret = r.readSigningSecret(ctx, dest, types.StringNull())
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -286,10 +332,7 @@ func (r *DestinationResource) Read(ctx context.Context, req resource.ReadRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
-
-	// Preserve sensitive fields before overwriting state
-	prevAuthConfig := state.AuthConfig
-	prevConfig := state.Config
+	prior := state
 
 	dest, err := r.client.GetDestination(ctx, state.ID.ValueString())
 	if err != nil {
@@ -299,89 +342,53 @@ func (r *DestinationResource) Read(ctx context.Context, req resource.ReadRequest
 
 	mapDestinationToState(ctx, dest, &state, &resp.Diagnostics)
 
-	// Restore sensitive fields that the API redacts
-	if !prevAuthConfig.IsNull() && !prevAuthConfig.IsUnknown() {
-		state.AuthConfig = prevAuthConfig
+	// auth_config: the API masks it for principals without credential access, so a value in state
+	// is kept; with none (an import) the API's is taken.
+	if prior.AuthConfig.IsNull() || prior.AuthConfig.IsUnknown() {
+		state.AuthConfig = authConfigFromAPI(ctx, dest, &resp.Diagnostics)
 	}
-	if !prevConfig.IsNull() && !prevConfig.IsUnknown() {
-		state.Config = prevConfig
-	}
+	state.Config = jsonToState(prior.Config, dest.Config, destinationConfigRedacted(dest.Type))
+	state.SigningSecret = r.readSigningSecret(ctx, dest, prior.SigningSecret)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *DestinationResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan DestinationResourceModel
+	var plan, state DestinationResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	updateReq := client.UpdateDestinationRequest{}
-
-	if !plan.Name.IsNull() {
-		v := plan.Name.ValueString()
-		updateReq.Name = &v
-	}
-	if !plan.URL.IsNull() {
-		v := plan.URL.ValueString()
-		updateReq.URL = &v
-	}
-	if !plan.Method.IsNull() {
-		v := plan.Method.ValueString()
-		updateReq.Method = &v
-	}
-	if !plan.AuthType.IsNull() {
-		v := plan.AuthType.ValueString()
-		updateReq.AuthType = &v
-	}
-	if !plan.TimeoutMs.IsNull() {
-		v := int(plan.TimeoutMs.ValueInt64())
-		updateReq.TimeoutMs = &v
-	}
-	if !plan.Type.IsNull() {
-		v := plan.Type.ValueString()
-		updateReq.Type = &v
-	}
-	if !plan.BatchSize.IsNull() {
-		v := int(plan.BatchSize.ValueInt64())
-		updateReq.BatchSize = &v
-	}
-	if !plan.BatchWindowSeconds.IsNull() {
-		v := int(plan.BatchWindowSeconds.ValueInt64())
-		updateReq.BatchWindowSeconds = &v
-	}
-	if !plan.UseStaticIP.IsNull() {
-		v := plan.UseStaticIP.ValueBool()
-		updateReq.UseStaticIP = &v
-	}
-	if !plan.IsActive.IsNull() {
-		v := plan.IsActive.ValueBool()
-		updateReq.IsActive = &v
-	}
-	updateReq.Throttle = throttleFromPlan(&plan)
-
-	resp.Diagnostics.Append(mapToStringMap(ctx, plan.Headers, &updateReq.Headers)...)
-	resp.Diagnostics.Append(mapToStringMap(ctx, plan.AuthConfig, &updateReq.AuthConfig)...)
+	updateReq, diags := buildUpdateDestinationRequest(ctx, &plan, &state)
+	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if !plan.Config.IsNull() && !plan.Config.IsUnknown() {
-		updateReq.Config = json.RawMessage(plan.Config.ValueString())
-	}
-
-	dest, err := r.client.UpdateDestination(ctx, plan.ID.ValueString(), updateReq)
-	if err != nil {
+	// PATCH answers {success:true} only, so the reply carries nothing to map.
+	if err := r.client.UpdateDestination(ctx, plan.ID.ValueString(), updateReq); err != nil {
 		resp.Diagnostics.AddError("Error updating destination", err.Error())
 		return
 	}
 
+	dest, err := r.client.GetDestination(ctx, plan.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Error reading destination after update", err.Error())
+		return
+	}
+
+	plannedSecret := plan.SigningSecret
 	mapDestinationToState(ctx, dest, &plan, &resp.Diagnostics)
-
-	// Sensitive fields (auth_config, config) are redacted in API responses; mapDestinationToState
-	// above already preserves the plan values into `plan`, so no extra copy is needed here.
-
+	if plan.AuthConfig.IsUnknown() {
+		plan.AuthConfig = authConfigFromAPI(ctx, dest, &resp.Diagnostics)
+	}
+	// An update never changes the secret, so the planned value (the prior state's) stands. It is
+	// read back only if the plan left it unknown, which UseStateForUnknown should prevent.
+	if plannedSecret.IsUnknown() {
+		plan.SigningSecret = r.readSigningSecret(ctx, dest, types.StringNull())
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -400,6 +407,114 @@ func (r *DestinationResource) Delete(ctx context.Context, req resource.DeleteReq
 
 func (r *DestinationResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// readSigningSecret returns the destination's signing secret for state: null when it has none
+// (every type but http), otherwise the reveal-secret answer. When the reveal call fails (e.g. an
+// API key without write scope), prior is kept rather than guessing.
+func (r *DestinationResource) readSigningSecret(ctx context.Context, dest *client.Destination, prior types.String) types.String {
+	if !dest.HasSigningSecret {
+		return types.StringNull()
+	}
+	secret, err := r.client.RevealDestinationSecret(ctx, dest.ID)
+	if err != nil || secret == "" {
+		return prior
+	}
+	return types.StringValue(secret)
+}
+
+// authConfigFromAPI is auth_config as the API reports it, for when state has no value of its own.
+func authConfigFromAPI(ctx context.Context, dest *client.Destination, diags *diag.Diagnostics) types.Map {
+	if len(dest.AuthConfig) == 0 {
+		return types.MapNull(types.StringType)
+	}
+	m, d := types.MapValueFrom(ctx, types.StringType, dest.AuthConfig)
+	diags.Append(d...)
+	return m
+}
+
+func buildCreateDestinationRequest(ctx context.Context, plan *DestinationResourceModel) (client.CreateDestinationRequest, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	createReq := client.CreateDestinationRequest{
+		Name: plan.Name.ValueString(),
+		Slug: plan.Slug.ValueString(),
+		// "" when unset, which the API accepts for every type but http.
+		URL: plan.URL.ValueString(),
+	}
+
+	createReq.Method = knownString(plan.Method)
+	createReq.AuthType = knownString(plan.AuthType)
+	createReq.TimeoutMs = knownInt(plan.TimeoutMs)
+	createReq.Type = knownString(plan.Type)
+	createReq.BatchSize = knownInt(plan.BatchSize)
+	createReq.BatchWindowSeconds = knownInt(plan.BatchWindowSeconds)
+	createReq.UseStaticIP = knownBool(plan.UseStaticIP)
+	createReq.Throttle = throttleFromPlan(plan)
+
+	diags.Append(mapToStringMap(ctx, plan.Headers, &createReq.Headers)...)
+	diags.Append(mapToStringMap(ctx, plan.AuthConfig, &createReq.AuthConfig)...)
+
+	if !plan.Config.IsNull() && !plan.Config.IsUnknown() {
+		createReq.Config = json.RawMessage(plan.Config.ValueString())
+	}
+	return createReq, diags
+}
+
+// buildUpdateDestinationRequest builds the PATCH body. Values in the plan are sent; an optional
+// attribute removed from configuration is cleared (url to "", headers and config to null, batching
+// to the API's defaults) so the stored value doesn't outlive it. auth_config is Computed and keeps
+// its state value when removed, so it is simply re-sent. type is sent unchanged (the API accepts
+// the current type and refuses any other; RequiresReplace plans a change as a new destination).
+func buildUpdateDestinationRequest(ctx context.Context, plan, state *DestinationResourceModel) (client.UpdateDestinationRequest, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	updateReq := client.UpdateDestinationRequest{
+		Name:        knownString(plan.Name),
+		URL:         knownString(plan.URL),
+		Method:      knownString(plan.Method),
+		AuthType:    knownString(plan.AuthType),
+		TimeoutMs:   knownInt(plan.TimeoutMs),
+		Type:        knownString(plan.Type),
+		UseStaticIP: knownBool(plan.UseStaticIP),
+		IsActive:    knownBool(plan.IsActive),
+		Throttle:    throttleFromPlan(plan),
+	}
+	if plan.URL.IsNull() && !state.URL.IsNull() {
+		empty := ""
+		updateReq.URL = &empty
+	}
+
+	updateReq.BatchSize = knownInt(plan.BatchSize)
+	if plan.BatchSize.IsNull() && !state.BatchSize.IsNull() {
+		one := 1
+		updateReq.BatchSize = &one
+	}
+	updateReq.BatchWindowSeconds = knownInt(plan.BatchWindowSeconds)
+	if plan.BatchWindowSeconds.IsNull() && !state.BatchWindowSeconds.IsNull() {
+		zero := 0
+		updateReq.BatchWindowSeconds = &zero
+	}
+
+	switch {
+	case !plan.Headers.IsNull() && !plan.Headers.IsUnknown():
+		headers := map[string]string{}
+		diags.Append(plan.Headers.ElementsAs(ctx, &headers, false)...)
+		updateReq.Headers = &headers
+	case plan.Headers.IsNull() && !state.Headers.IsNull():
+		var cleared map[string]string
+		updateReq.Headers = &cleared
+	}
+	diags.Append(mapToStringMap(ctx, plan.AuthConfig, &updateReq.AuthConfig)...)
+
+	// config is sent only when it changed. The API re-validates a config it is given (for a bridge:
+	// that its event type is still enabled), and a rename must not fail on that.
+	switch {
+	case plan.Config.Equal(state.Config) || plan.Config.IsUnknown():
+	case !plan.Config.IsNull():
+		updateReq.Config = json.RawMessage(plan.Config.ValueString())
+	default:
+		updateReq.Config = json.RawMessage("null")
+	}
+	return updateReq, diags
 }
 
 // throttleFromPlan builds a client.Throttle from the throttle_* plan attributes.
@@ -426,11 +541,15 @@ func throttleFromPlan(plan *DestinationResourceModel) *client.Throttle {
 	return throttle
 }
 
+// mapDestinationToState copies the API's view of a destination into state. It leaves config,
+// auth_config and signing_secret alone: the API masks or re-encodes the first two and returns the
+// secret only on create, so each operation decides where they come from.
 func mapDestinationToState(ctx context.Context, dest *client.Destination, state *DestinationResourceModel, diags *diag.Diagnostics) {
 	state.ID = types.StringValue(dest.ID)
 	state.Name = types.StringValue(dest.Name)
 	state.Slug = types.StringValue(dest.Slug)
 
+	// Queue, storage and bridge destinations store "" for no URL.
 	if dest.URL != "" {
 		state.URL = types.StringValue(dest.URL)
 	} else {
@@ -502,6 +621,7 @@ func mapDestinationToState(ctx context.Context, dest *client.Destination, state 
 
 	state.UseStaticIP = types.BoolValue(dest.UseStaticIP)
 	state.IsActive = types.BoolValue(dest.IsActive)
+	state.HasSigningSecret = types.BoolValue(dest.HasSigningSecret)
 	if dest.CreatedAt != "" {
 		state.CreatedAt = types.StringValue(dest.CreatedAt)
 	}
@@ -509,28 +629,17 @@ func mapDestinationToState(ctx context.Context, dest *client.Destination, state 
 		state.UpdatedAt = types.StringValue(dest.UpdatedAt)
 	}
 
-	// Headers
-	if len(dest.Headers) > 0 {
+	// Headers. An empty answer keeps a planned or prior empty map (headers = {}), as for lists.
+	switch {
+	case len(dest.Headers) > 0:
 		m, d := types.MapValueFrom(ctx, types.StringType, dest.Headers)
 		diags.Append(d...)
 		state.Headers = m
-	} else {
+	case !state.Headers.IsNull() && !state.Headers.IsUnknown() && len(state.Headers.Elements()) == 0:
+		// keep {}
+	default:
 		state.Headers = types.MapNull(types.StringType)
 	}
-
-	// AuthConfig — API redacts, so only set if non-empty; otherwise leave as-is (handled by caller)
-	if len(dest.AuthConfig) > 0 {
-		m, d := types.MapValueFrom(ctx, types.StringType, dest.AuthConfig)
-		diags.Append(d...)
-		state.AuthConfig = m
-	}
-	// If AuthConfig is nil/empty from API, leave state.AuthConfig unchanged (caller preserves)
-
-	// Config — API redacts, so only set if non-empty
-	if len(dest.Config) > 0 && string(dest.Config) != "null" {
-		state.Config = types.StringValue(string(dest.Config))
-	}
-	// If Config is nil/empty from API, leave state.Config unchanged (caller preserves)
 }
 
 // Helper to convert types.Map to map[string]string for client requests
@@ -557,7 +666,9 @@ func (m mapUseStateForUnknown) MarkdownDescription(_ context.Context) string {
 }
 
 func (m mapUseStateForUnknown) PlanModifyMap(_ context.Context, req planmodifier.MapRequest, resp *planmodifier.MapResponse) {
-	if !req.PlanValue.IsUnknown() {
+	// An unknown configuration value (e.g. a reference to a resource not yet created) must stay
+	// unknown, or the plan would promise the prior state and the apply would contradict it.
+	if !req.PlanValue.IsUnknown() || req.ConfigValue.IsUnknown() {
 		return
 	}
 	resp.PlanValue = req.StateValue
