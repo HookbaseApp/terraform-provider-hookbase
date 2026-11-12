@@ -387,3 +387,130 @@ func TestEmailListDecodes(t *testing.T) {
 		t.Error("a number decoded without error")
 	}
 }
+
+// The API's global limiter answers 429 with Retry-After until its one-minute window ends. The
+// client waits as asked and tries more often than for other errors, instead of giving up after
+// about three seconds.
+func TestRetryOn429HonorsRetryAfter(t *testing.T) {
+	var attempts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&attempts, 1) <= 3 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = fmt.Fprint(w, `{"error":"Rate limit exceeded. Please slow down."}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL, OrganizationID: "org-1", APIKey: "key", HTTPClient: srv.Client()}
+
+	var got struct {
+		OK bool `json:"ok"`
+	}
+	start := time.Now()
+	if err := c.Get(context.Background(), "/test", &got); err != nil {
+		t.Fatalf("Get after three 429s: %v", err)
+	}
+	if !got.OK || atomic.LoadInt32(&attempts) != 4 {
+		t.Errorf("ok=%v after %d attempts, want true after 4", got.OK, atomic.LoadInt32(&attempts))
+	}
+	if elapsed := time.Since(start); elapsed < 3*time.Second {
+		t.Errorf("retried after %v, want Retry-After's 1s three times", elapsed)
+	}
+}
+
+// waitsOf replaces the client's wait with one that records the durations and returns at once.
+func waitsOf(t *testing.T) *[]time.Duration {
+	t.Helper()
+	var waits []time.Duration
+	orig := wait
+	wait = func(ctx context.Context, d time.Duration) error {
+		waits = append(waits, d)
+		return ctx.Err()
+	}
+	t.Cleanup(func() { wait = orig })
+	return &waits
+}
+
+func TestRetryOn429GivesUpAndCapsTheWait(t *testing.T) {
+	waits := waitsOf(t)
+	var attempts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		w.Header().Set("Retry-After", "3600")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = fmt.Fprint(w, `{"error":"Rate limit exceeded. Please slow down."}`)
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL, OrganizationID: "org-1", APIKey: "key", HTTPClient: srv.Client()}
+
+	err := c.Get(context.Background(), "/test", nil)
+	if err == nil || !strings.Contains(err.Error(), "API error (429): Rate limit exceeded") {
+		t.Fatalf("err = %v, want the API's 429", err)
+	}
+	if n := atomic.LoadInt32(&attempts); n != maxRateLimitAttempts {
+		t.Errorf("attempts = %d, want %d", n, maxRateLimitAttempts)
+	}
+	for _, d := range *waits {
+		if d != maxRetryAfter {
+			t.Errorf("waited %v, want Retry-After capped at %v", d, maxRetryAfter)
+		}
+	}
+	if len(*waits) != maxRateLimitAttempts-1 {
+		t.Errorf("waited %d times, want %d", len(*waits), maxRateLimitAttempts-1)
+	}
+}
+
+func TestRetryAfterHeader(t *testing.T) {
+	fallback := 2 * time.Second
+	future := time.Now().Add(30 * time.Second).UTC().Format(http.TimeFormat)
+	for value, want := range map[string]time.Duration{
+		"":      fallback,
+		"7":     7 * time.Second,
+		"0":     0,
+		"3600":  maxRetryAfter,
+		"-5":    fallback,
+		"soon":  fallback,
+		future:  30 * time.Second,
+		"  12 ": 12 * time.Second,
+	} {
+		h := http.Header{}
+		if value != "" {
+			h.Set("Retry-After", value)
+		}
+		got := retryAfter(h, fallback)
+		if value == future {
+			// An HTTP date has one-second resolution.
+			if got < 28*time.Second || got > 30*time.Second {
+				t.Errorf("Retry-After %q = %v, want about 30s", value, got)
+			}
+			continue
+		}
+		if got != want {
+			t.Errorf("Retry-After %q = %v, want %v", value, got, want)
+		}
+	}
+}
+
+// A cancelled operation stops waiting for the rate limit window instead of sleeping it out.
+func TestRetryWaitStopsOnCancel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL, OrganizationID: "org-1", APIKey: "key", HTTPClient: srv.Client()}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := c.Get(ctx, "/test", nil)
+	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Errorf("err = %v, want the context's", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("returned after %v, want soon after the cancel", elapsed)
+	}
+}
