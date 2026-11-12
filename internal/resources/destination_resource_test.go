@@ -169,10 +169,20 @@ func TestDestinationCreate_HTTPSecretFromCreateReply(t *testing.T) {
 		t.Errorf("after refresh signing_secret = %v, want whsec_rotated", got.SigningSecret)
 	}
 
-	// A reveal the key isn't allowed (write scope) keeps the secret in state instead of dropping it.
+	// A reveal the key isn't allowed (write scope) keeps the secret in state instead of dropping it,
+	// and warns that it may be stale.
 	f.revealStatus = http.StatusForbidden
-	if got := readDestination(t, r, st); got.SigningSecret.ValueString() != "whsec_created" {
+	resp := resource.ReadResponse{State: nullStateOf(t, r)}
+	r.Read(context.Background(), resource.ReadRequest{State: st}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Read: %v", resp.Diagnostics)
+	}
+	if got := modelOf[DestinationResourceModel](t, resp.State); got.SigningSecret.ValueString() != "whsec_created" {
 		t.Errorf("after a refused reveal signing_secret = %v, want the prior whsec_created", got.SigningSecret)
+	}
+	warnings := resp.Diagnostics.Warnings()
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Detail(), "403") || !strings.Contains(warnings[0].Detail(), "stale") {
+		t.Errorf("warnings = %v, want one naming the 403 and that the kept secret may be stale", warnings)
 	}
 }
 
@@ -272,6 +282,40 @@ func TestDestinationUpdate_ReadsBackAfterPatch(t *testing.T) {
 	}
 }
 
+// State from 0.6.x has no has_signing_secret or signing_secret. Without a refresh
+// (-refresh=false), UseStateForUnknown plans those nulls, and the applied state must keep them
+// rather than take the API's values; the next refresh fills them in.
+func TestDestinationUpdate_UnrefreshedUpgradeKeepsPlannedNulls(t *testing.T) {
+	dest := baseDestination("http")
+	dest.URL = "https://example.com/hook"
+	dest.HasSigningSecret = true
+	f := &fakeDestinationAPI{t: t, dest: dest, secret: "whsec_existing"}
+	r := newTestDestinationResource(t, f)
+
+	old := newDestinationPlan("http")
+	old.ID, old.URL = types.StringValue("dst_1"), types.StringValue("https://example.com/hook")
+	old.SigningSecret, old.HasSigningSecret = types.StringNull(), types.BoolNull()
+	old.CreatedAt, old.UpdatedAt = types.StringValue(dest.CreatedAt), types.StringValue(dest.UpdatedAt)
+
+	plan := old
+	plan.Name = types.StringValue("renamed")
+	f.dest.Name = "renamed"
+	resp := resource.UpdateResponse{State: nullStateOf(t, r)}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: planOf(t, r, &plan), State: stateOf(t, r, &old)}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Update: %v", resp.Diagnostics)
+	}
+	got := modelOf[DestinationResourceModel](t, resp.State)
+	if !got.HasSigningSecret.IsNull() || !got.SigningSecret.IsNull() {
+		t.Errorf("has_signing_secret = %v, signing_secret = %v; want the planned nulls", got.HasSigningSecret, got.SigningSecret)
+	}
+
+	// The next refresh fills both in.
+	if got := readDestination(t, r, resp.State); !got.HasSigningSecret.ValueBool() || got.SigningSecret.ValueString() != "whsec_existing" {
+		t.Errorf("after refresh has_signing_secret = %v, signing_secret = %v", got.HasSigningSecret, got.SigningSecret)
+	}
+}
+
 func TestDestinationRead_ImportRevealsSecret(t *testing.T) {
 	dest := baseDestination("http")
 	dest.URL = "https://example.com/hook"
@@ -336,6 +380,45 @@ func TestBuildUpdateDestinationRequest(t *testing.T) {
 		}
 	})
 
+	// A rename of a bridge must not carry anything bridgeUnsupportedFields (api destinations.ts)
+	// refuses: a truthy url, non-empty headers, an authType other than none, useStaticIp true. Nor
+	// the unchanged config, which would re-run the bridge checks (and need events:send).
+	t.Run("bridge rename", func(t *testing.T) {
+		bridge := newDestinationPlan("bridge")
+		bridge.ID = types.StringValue("dst_1")
+		bridge.Config = types.StringValue(`{"applicationId":"app_1","eventTypeSource":"payload"}`)
+		bridge.SigningSecret, bridge.HasSigningSecret = types.StringNull(), types.BoolValue(false)
+		plan := bridge
+		plan.Name = types.StringValue("renamed")
+		req, diags := buildUpdateDestinationRequest(ctx, &plan, &bridge)
+		if diags.HasError() {
+			t.Fatal(diags)
+		}
+		body := toJSONMap(t, req)
+		if v, ok := body["url"]; ok && v != "" {
+			t.Errorf("url = %v, want absent or \"\"", v)
+		}
+		if h, ok := body["headers"]; ok && h != nil {
+			if m, isMap := h.(map[string]any); !isMap || len(m) > 0 {
+				t.Errorf("headers = %v, want absent, null or empty", h)
+			}
+		}
+		if v, ok := body["authType"]; ok && v != "none" {
+			t.Errorf("authType = %v, want absent or none", v)
+		}
+		if v, ok := body["useStaticIp"]; ok && v != false {
+			t.Errorf("useStaticIp = %v, want absent or false", v)
+		}
+		for _, key := range []string{"config", "signingSecret"} {
+			if v, ok := body[key]; ok {
+				t.Errorf("%s = %v sent for a rename", key, v)
+			}
+		}
+		if body["name"] != "renamed" || body["type"] != "bridge" {
+			t.Errorf("name = %v, type = %v", body["name"], body["type"])
+		}
+	})
+
 	t.Run("changed config is sent", func(t *testing.T) {
 		plan := state
 		plan.Config = types.StringValue(`{"queueUrl":"q2"}`)
@@ -389,6 +472,14 @@ func TestJSONToState(t *testing.T) {
 		{"import takes the API's", types.StringNull(), `{"b": 2, "a": 1}`, false, `{"b":2,"a":1}`},
 		{"configured [] stored as nothing", types.StringValue(`[]`), `null`, false, "prior"},
 		{"configured {} stored as nothing", types.StringValue(`{ }`), ``, false, "prior"},
+		// State written by 0.6.x holds a route's filter_conditions as the API sent it: its stored
+		// JSON text (jsonb's key order and spacing) in a JSON string. It is stored the way
+		// jsonencode writes the value, so a jsonencode() configuration shows no diff.
+		{"0.6.x prior: JSON string", types.StringValue(`"[{\"field\": \"type\", \"value\": \"order.created\", \"operator\": \"equals\"}]"`),
+			`"[{\"field\": \"type\", \"value\": \"order.created\", \"operator\": \"equals\"}]"`, false,
+			`[{"field":"type","operator":"equals","value":"order.created"}]`},
+		{"0.6.x prior: drift still shows", types.StringValue(`"[{\"field\": \"type\", \"operator\": \"exists\"}]"`),
+			`"[{\"field\": \"kind\", \"operator\": \"exists\"}]"`, false, `[{"field":"kind","operator":"exists"}]`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -42,6 +42,23 @@ func planOf(t *testing.T, r resource.Resource, m any) tfsdk.Plan {
 	return plan
 }
 
+// configOf is the configuration a model's plan comes from: m with its unknown values null, as an
+// attribute left out of configuration is (Terraform resolves every config value before apply).
+func configOf(t *testing.T, r resource.Resource, m any) tfsdk.Config {
+	t.Helper()
+	plan := planOf(t, r, m)
+	raw, err := tftypes.Transform(plan.Raw, func(_ *tftypes.AttributePath, v tftypes.Value) (tftypes.Value, error) {
+		if !v.IsKnown() {
+			return tftypes.NewValue(v.Type(), nil), nil
+		}
+		return v, nil
+	})
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	return tfsdk.Config{Schema: plan.Schema, Raw: raw}
+}
+
 func stateOf(t *testing.T, r resource.Resource, m any) tfsdk.State {
 	t.Helper()
 	st := nullStateOf(t, r)

@@ -9,10 +9,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hookbase/terraform-provider-hookbase/internal/client"
 )
@@ -137,12 +139,16 @@ func (r *WebhookEndpointResource) Schema(_ context.Context, _ resource.SchemaReq
 			},
 			"hold_on_circuit_open": schema.BoolAttribute{
 				Description: "While the endpoint's circuit is open, hold its messages and send them once the " +
-					"endpoint recovers, instead of dead-lettering them. Defaults to true. FIFO and polling " +
-					"endpoints never hold. Turning it off does not release messages already held; they are " +
-					"dead-lettered on their next attempt while the circuit stays open.",
+					"endpoint recovers, instead of dead-lettering them. When not set, the endpoint keeps its " +
+					"current value (a new endpoint gets the API default, true), so a value changed outside " +
+					"Terraform is left alone. FIFO and polling endpoints never hold. Turning it off does not " +
+					"release messages already held; they are dead-lettered on their next attempt while the " +
+					"circuit stays open.",
 				Optional: true,
 				Computed: true,
-				Default:  booldefault.StaticBool(true),
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"is_disabled": schema.BoolAttribute{
 				Description: "Whether the endpoint is disabled.",
@@ -243,8 +249,11 @@ func (r *WebhookEndpointResource) Create(ctx context.Context, req resource.Creat
 		v := int(plan.CircuitCooldownSeconds.ValueInt64())
 		createReq.CircuitCooldownSeconds = &v
 	}
-	// Always sent, so the API's default can never differ from the schema's.
-	createReq.HoldOnCircuitOpen = holdOnCircuitOpenValue(plan.HoldOnCircuitOpen)
+	// Sent only when configured; otherwise the API's default applies and is read back.
+	createReq.HoldOnCircuitOpen = configuredBool(ctx, req.Config, path.Root("hold_on_circuit_open"), &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	endpoint, err := r.client.CreateWebhookEndpoint(ctx, createReq)
 	if err != nil {
@@ -362,7 +371,11 @@ func (r *WebhookEndpointResource) Update(ctx context.Context, req resource.Updat
 		v := int(plan.CircuitCooldownSeconds.ValueInt64())
 		updateReq.CircuitCooldownSeconds = &v
 	}
-	updateReq.HoldOnCircuitOpen = holdOnCircuitOpenValue(plan.HoldOnCircuitOpen)
+	// Sent only when configured, so a value changed outside Terraform is kept.
+	updateReq.HoldOnCircuitOpen = configuredBool(ctx, req.Config, path.Root("hold_on_circuit_open"), &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	endpoint, err := r.client.UpdateWebhookEndpoint(ctx, plan.ID.ValueString(), updateReq)
 	if err != nil {
@@ -370,7 +383,13 @@ func (r *WebhookEndpointResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 
+	plannedHold := plan.HoldOnCircuitOpen
 	mapWebhookEndpointToState(endpoint, &plan, &resp.Diagnostics)
+	// A known planned value must be the applied one. It is null when the state predates the
+	// attribute and was not refreshed; the next refresh fills it in.
+	if !plannedHold.IsUnknown() {
+		plan.HoldOnCircuitOpen = plannedHold
+	}
 
 	// Preserve secret from state since update response doesn't include it
 	if !currentState.Secret.IsNull() && !currentState.Secret.IsUnknown() {
@@ -448,9 +467,10 @@ func mapWebhookEndpointToState(ep *client.WebhookEndpoint, state *WebhookEndpoin
 	}
 }
 
-// holdOnCircuitOpenValue is hold_on_circuit_open for a create or update body: the planned value,
-// or the default (true) if the plan has none. The attribute has a default, so a plan always has one.
-func holdOnCircuitOpenValue(v types.Bool) *bool {
-	hold := v.IsNull() || v.IsUnknown() || v.ValueBool()
-	return &hold
+// configuredBool is a bool attribute as set in configuration, or nil when it is not set there. An
+// Optional+Computed attribute's plan cannot tell the two apart once it holds the prior state.
+func configuredBool(ctx context.Context, config tfsdk.Config, p path.Path, diags *diag.Diagnostics) *bool {
+	var v types.Bool
+	diags.Append(config.GetAttribute(ctx, p, &v)...)
+	return knownBool(v)
 }

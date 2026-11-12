@@ -112,5 +112,5 @@ resource "hookbase_destination" "orders_bridge" {
 - `created_at` (String) Creation timestamp.
 - `has_signing_secret` (Boolean) Whether the destination signs its deliveries (true for http destinations).
 - `id` (String) Destination ID.
-- `signing_secret` (String, Sensitive) The secret Hookbase signs this destination's deliveries with (http destinations only), for the receiver to verify the webhook-signature header. Hookbase generates it at create; it is refreshed from the API on read. Null for other types. Rotate it in the dashboard or API, not here.
+- `signing_secret` (String, Sensitive) The secret Hookbase signs this destination's deliveries with (http destinations only), for the receiver to verify the webhook-signature header. Hookbase generates it at create; it is refreshed from the API on read, through the reveal-secret endpoint, which records a destination.secret_revealed audit event each time. Reading it needs the member role or above and, for an API key, the write scope; without them the previous value is kept and a warning says so. Null for other types. Rotate it in the dashboard or API, not here.
 - `updated_at` (String) Last update timestamp.

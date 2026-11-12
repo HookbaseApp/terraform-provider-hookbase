@@ -35,7 +35,8 @@ resource "hookbase_route" "github_to_slack" {
 }
 
 # Route that dead-letters deliveries while the destination's circuit is open, instead of holding them
-# until it recovers (hold_on_circuit_open defaults to true)
+# until it recovers. Left unset, hold_on_circuit_open keeps the route's current value (true for a new
+# route).
 resource "hookbase_route" "audit_log" {
   name                 = "audit-log"
   source_id            = hookbase_source.github.id
@@ -68,7 +69,7 @@ resource "hookbase_route" "audit_log" {
 - `filter_conditions` (String) Inline filter conditions as a JSON array (use jsonencode). Key order and formatting are ignored when comparing with the API's copy.
 - `filter_id` (String) ID of a saved filter to apply.
 - `filter_logic` (String) Logic for combining filter conditions: AND or OR.
-- `hold_on_circuit_open` (Boolean) While the route's circuit is open, hold its deliveries and send them once the destination recovers, instead of dead-lettering them. Defaults to true. Turning it off does not release deliveries already held; they are dead-lettered on their next attempt while the circuit stays open.
+- `hold_on_circuit_open` (Boolean) While the route's circuit is open, hold its deliveries and send them once the destination recovers, instead of dead-lettering them. When not set, the route keeps its current value (a new route gets the API default, true), so a value changed outside Terraform is left alone. Turning it off does not release deliveries already held; they are dead-lettered on their next attempt while the circuit stays open.
 - `is_active` (Boolean) Whether the route is active.
 - `notify_emails` (String) Comma-separated email addresses for notifications.
 - `notify_on_failure` (Boolean) Send notification on delivery failure.

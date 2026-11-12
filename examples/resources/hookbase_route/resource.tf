@@ -20,7 +20,8 @@ resource "hookbase_route" "github_to_slack" {
 }
 
 # Route that dead-letters deliveries while the destination's circuit is open, instead of holding them
-# until it recovers (hold_on_circuit_open defaults to true)
+# until it recovers. Left unset, hold_on_circuit_open keeps the route's current value (true for a new
+# route).
 resource "hookbase_route" "audit_log" {
   name                 = "audit-log"
   source_id            = hookbase_source.github.id

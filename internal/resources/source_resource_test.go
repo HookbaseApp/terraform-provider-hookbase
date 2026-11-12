@@ -725,6 +725,28 @@ func TestSourceCatalogProviderIsSentOnCreateOnly(t *testing.T) {
 	}
 }
 
+// State from 0.6.x has no catalog_provider. Without a refresh (-refresh=false) the plan holds that
+// null, and the applied state must too, even for a source made from a catalog entry.
+func TestSourceUpdate_UnrefreshedUpgradeKeepsPlannedCatalogProvider(t *testing.T) {
+	src := baseSource("github")
+	src.HasSigningSecret = true
+	src.CatalogProvider = strp("github")
+	f := &fakeSourceAPI{t: t, source: src, secret: "generated"}
+	r := newTestSourceResource(t, f)
+
+	state := appliedModel()
+	plan := state
+	plan.Name = types.StringValue("renamed")
+	resp := resource.UpdateResponse{State: emptyState(t, r)}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: planFrom(t, r, plan), State: stateFrom(t, r, state)}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Update: %v", resp.Diagnostics)
+	}
+	if got := readModel(t, resp.State); !got.CatalogProvider.IsNull() {
+		t.Errorf("catalog_provider = %v, want the planned null", got.CatalogProvider)
+	}
+}
+
 // catalog_provider's plan modifiers: an unset value plans as the recorded one (so an import or a
 // dashboard-made source is not replaced), and only a real change forces replacement.
 func TestSourceCatalogProviderPlan(t *testing.T) {

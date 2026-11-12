@@ -3,6 +3,7 @@ package resources
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -225,8 +226,10 @@ func (r *DestinationResource) Schema(_ context.Context, _ resource.SchemaRequest
 			"signing_secret": schema.StringAttribute{
 				Description: "The secret Hookbase signs this destination's deliveries with (http destinations " +
 					"only), for the receiver to verify the webhook-signature header. Hookbase generates it at " +
-					"create; it is refreshed from the API on read. Null for other types. Rotate it in the " +
-					"dashboard or API, not here.",
+					"create; it is refreshed from the API on read, through the reveal-secret endpoint, which " +
+					"records a destination.secret_revealed audit event each time. Reading it needs the member " +
+					"role or above and, for an API key, the write scope; without them the previous value is " +
+					"kept and a warning says so. Null for other types. Rotate it in the dashboard or API, not here.",
 				Computed:  true,
 				Sensitive: true,
 				PlanModifiers: []planmodifier.String{
@@ -324,7 +327,7 @@ func (r *DestinationResource) Create(ctx context.Context, req resource.CreateReq
 	if secret := nonEmpty(created.SigningSecret); secret != nil {
 		plan.SigningSecret = types.StringValue(*secret)
 	} else {
-		plan.SigningSecret = r.readSigningSecret(ctx, dest, types.StringNull())
+		plan.SigningSecret = r.readSigningSecret(ctx, dest, types.StringNull(), &resp.Diagnostics)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -351,7 +354,7 @@ func (r *DestinationResource) Read(ctx context.Context, req resource.ReadRequest
 		state.AuthConfig = authConfigFromAPI(ctx, dest, &resp.Diagnostics)
 	}
 	state.Config = jsonToState(prior.Config, dest.Config, destinationConfigRedacted(dest.Type))
-	state.SigningSecret = r.readSigningSecret(ctx, dest, prior.SigningSecret)
+	state.SigningSecret = r.readSigningSecret(ctx, dest, prior.SigningSecret, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -382,15 +385,20 @@ func (r *DestinationResource) Update(ctx context.Context, req resource.UpdateReq
 		return
 	}
 
-	plannedSecret := plan.SigningSecret
+	plannedSecret, plannedHasSecret := plan.SigningSecret, plan.HasSigningSecret
 	mapDestinationToState(ctx, dest, &plan, &resp.Diagnostics)
 	if plan.AuthConfig.IsUnknown() {
 		plan.AuthConfig = authConfigFromAPI(ctx, dest, &resp.Diagnostics)
 	}
-	// An update never changes the secret, so the planned value (the prior state's) stands. It is
-	// read back only if the plan left it unknown, which UseStateForUnknown should prevent.
+	// An update never changes the secret, so the planned values (the prior state's) stand: a known
+	// planned value must be the applied one. They are null when the state predates them and was
+	// not refreshed (-refresh=false after upgrading), and the next refresh fills them in. They are
+	// read back only if the plan left them unknown.
+	if !plannedHasSecret.IsUnknown() {
+		plan.HasSigningSecret = plannedHasSecret
+	}
 	if plannedSecret.IsUnknown() {
-		plan.SigningSecret = r.readSigningSecret(ctx, dest, types.StringNull())
+		plan.SigningSecret = r.readSigningSecret(ctx, dest, types.StringNull(), &resp.Diagnostics)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -414,16 +422,28 @@ func (r *DestinationResource) ImportState(ctx context.Context, req resource.Impo
 
 // readSigningSecret returns the destination's signing secret for state: null when it has none
 // (every type but http), otherwise the reveal-secret answer. When the reveal call fails (e.g. an
-// API key without write scope), prior is kept rather than guessing.
-func (r *DestinationResource) readSigningSecret(ctx context.Context, dest *client.Destination, prior types.String) types.String {
+// API key without write scope), prior is kept rather than guessing, with a warning saying so.
+func (r *DestinationResource) readSigningSecret(ctx context.Context, dest *client.Destination, prior types.String, diags *diag.Diagnostics) types.String {
 	if !dest.HasSigningSecret {
 		return types.StringNull()
 	}
 	secret, err := r.client.RevealDestinationSecret(ctx, dest.ID)
-	if err != nil || secret == "" {
-		return prior
+	if err == nil && secret != "" {
+		return types.StringValue(secret)
 	}
-	return types.StringValue(secret)
+	reason := "the API returned no secret"
+	if err != nil {
+		reason = err.Error()
+	}
+	kept := "its previous value, which may be stale if the secret was rotated outside Terraform"
+	if prior.IsNull() || prior.IsUnknown() {
+		kept = "null"
+	}
+	diags.AddAttributeWarning(path.Root("signing_secret"), "Could not read the destination's signing secret",
+		fmt.Sprintf("Destination %s signs its deliveries, but reading its signing secret failed: %s. "+
+			"Reading it needs the member role or above and, for an API key, the write scope. "+
+			"signing_secret keeps %s.", dest.ID, reason, kept))
+	return prior
 }
 
 // authConfigFromAPI is auth_config as the API reports it, for when state has no value of its own.

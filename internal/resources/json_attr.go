@@ -19,24 +19,34 @@ import (
 // from the stored ciphertext, not the secret, so they can't be checked against configuration.
 const redactedPrefix = "••••"
 
+// unwrapJSONText returns the JSON text that a JSON string holds, and raw otherwise. The API returns
+// some values (a route's filter_conditions) as their stored JSON text, i.e. a JSON string, and
+// provider 0.6.x stored that verbatim. A string holding nothing unwraps to null.
+func unwrapJSONText(raw []byte) []byte {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || raw[0] != '"' {
+		return raw
+	}
+	var inner string
+	if json.Unmarshal(raw, &inner) != nil {
+		return raw
+	}
+	inner = strings.TrimSpace(inner)
+	switch {
+	case inner == "":
+		return []byte("null")
+	case json.Valid([]byte(inner)):
+		return []byte(inner)
+	}
+	return raw
+}
+
 // jsonText returns the API's value as compact JSON text, and false when it has none (absent or
 // null). A value sent as its stored JSON text (a JSON string holding JSON) is unwrapped first.
 func jsonText(raw json.RawMessage) (string, bool) {
-	raw = bytes.TrimSpace(raw)
+	raw = unwrapJSONText(raw)
 	if len(raw) == 0 || string(raw) == "null" {
 		return "", false
-	}
-	if raw[0] == '"' {
-		var inner string
-		if err := json.Unmarshal(raw, &inner); err == nil {
-			inner = strings.TrimSpace(inner)
-			switch {
-			case inner == "" || inner == "null":
-				return "", false
-			case json.Valid([]byte(inner)):
-				raw = []byte(inner)
-			}
-		}
 	}
 	var out bytes.Buffer
 	if err := json.Compact(&out, raw); err != nil {
@@ -60,17 +70,43 @@ func jsonToState(prior types.String, raw json.RawMessage, redacted bool) types.S
 		}
 		return types.StringNull()
 	}
-	if !prior.IsNull() && !prior.IsUnknown() && jsonEquivalent(prior.ValueString(), api, redacted) {
-		return prior
+	if prior.IsNull() || prior.IsUnknown() || !jsonEquivalent(prior.ValueString(), api, redacted) {
+		return types.StringValue(api)
 	}
-	return types.StringValue(api)
+	// State written by provider 0.6.x can hold the API's value verbatim, which for a route's
+	// filter_conditions is a JSON string holding the JSON. No configuration says that, so the
+	// value is stored the way jsonencode writes it, which a jsonencode() configuration matches
+	// without a diff.
+	if text := strings.TrimSpace(prior.ValueString()); strings.HasPrefix(text, `"`) {
+		if canonical, ok := jsonencodeText(unwrapJSONText([]byte(text))); ok {
+			return types.StringValue(canonical)
+		}
+	}
+	return prior
+}
+
+// jsonencodeText returns JSON text as Terraform's jsonencode writes it: compact, object keys
+// sorted, and <, >, & escaped. Numbers keep their text.
+func jsonencodeText(text []byte) (string, bool) {
+	dec := json.NewDecoder(bytes.NewReader(text))
+	dec.UseNumber()
+	var v any
+	if dec.Decode(&v) != nil {
+		return "", false
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
 }
 
 // jsonEquivalent reports whether two JSON texts hold the same value, ignoring key order,
-// whitespace and number formatting (1 and 1.0). See jsonToState for redacted.
+// whitespace and number formatting (1 and 1.0). A prior holding its JSON as a JSON string (state
+// from provider 0.6.x) is unwrapped first, as the API's value is. See jsonToState for redacted.
 func jsonEquivalent(prior, api string, redacted bool) bool {
 	var p, a any
-	if json.Unmarshal([]byte(prior), &p) != nil || json.Unmarshal([]byte(api), &a) != nil {
+	if json.Unmarshal(unwrapJSONText([]byte(prior)), &p) != nil || json.Unmarshal([]byte(api), &a) != nil {
 		return false
 	}
 	return jsonValuesMatch(p, a, redacted)

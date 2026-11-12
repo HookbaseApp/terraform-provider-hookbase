@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -193,12 +194,15 @@ func (r *RouteResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 			"hold_on_circuit_open": schema.BoolAttribute{
 				Description: "While the route's circuit is open, hold its deliveries and send them once the " +
-					"destination recovers, instead of dead-lettering them. Defaults to true. Turning it off does not " +
-					"release deliveries already held; they are dead-lettered on their next attempt while the " +
-					"circuit stays open.",
+					"destination recovers, instead of dead-lettering them. When not set, the route keeps its " +
+					"current value (a new route gets the API default, true), so a value changed outside " +
+					"Terraform is left alone. Turning it off does not release deliveries already held; they " +
+					"are dead-lettered on their next attempt while the circuit stays open.",
 				Optional: true,
 				Computed: true,
-				Default:  booldefault.StaticBool(true),
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"created_at": schema.StringAttribute{
 				Description: "Creation timestamp.",
@@ -290,8 +294,8 @@ func (r *RouteResource) Create(ctx context.Context, req resource.CreateRequest, 
 	createReq.CircuitCooldownSeconds = knownInt(plan.CircuitCooldownSeconds)
 	createReq.CircuitProbeSuccessThreshold = knownInt(plan.CircuitProbeSuccessThreshold)
 	createReq.CircuitFailureThreshold = knownInt(plan.CircuitFailureThreshold)
-	// Always sent, so the API's default can never differ from the schema's.
-	createReq.HoldOnCircuitOpen = holdOnCircuitOpenValue(plan.HoldOnCircuitOpen)
+	// Sent only when configured; otherwise the API's default applies and is read back.
+	createReq.HoldOnCircuitOpen = configuredBool(ctx, req.Config, path.Root("hold_on_circuit_open"), &resp.Diagnostics)
 
 	resp.Diagnostics.Append(stringListToSlice(ctx, plan.FailoverDestinationIds, &createReq.FailoverDestinationIds)...)
 	if resp.Diagnostics.HasError() {
@@ -342,8 +346,20 @@ func (r *RouteResource) Update(ctx context.Context, req resource.UpdateRequest, 
 
 	updateReq, diags := buildUpdateRouteRequest(ctx, &plan, &state)
 	resp.Diagnostics.Append(diags...)
+	// Sent only when configured, so a value changed outside Terraform is kept.
+	updateReq.HoldOnCircuitOpen = configuredBool(ctx, req.Config, path.Root("hold_on_circuit_open"), &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+
+	// PATCH ignores the circuit settings; they have an endpoint of their own, which needs the
+	// circuit_breaker feature. It goes first, and only when a circuit setting changed, so that a
+	// refusal fails the apply before any other change is made.
+	if circuit, changed := routeCircuitConfigChange(&plan, &state); changed {
+		if err := r.client.UpdateRouteCircuitConfig(ctx, plan.ID.ValueString(), circuit); err != nil {
+			resp.Diagnostics.AddError("Error updating route circuit breaker settings", err.Error())
+			return
+		}
 	}
 
 	// PATCH answers {success:true} only, so the reply carries nothing to map.
@@ -352,30 +368,29 @@ func (r *RouteResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
-	// PATCH ignores the circuit settings; they have an endpoint of their own.
-	if circuit, changed := routeCircuitConfigChange(&plan, &state); changed {
-		if err := r.client.UpdateRouteCircuitConfig(ctx, plan.ID.ValueString(), circuit); err != nil {
-			resp.Diagnostics.AddError("Error updating route circuit breaker settings", err.Error())
-			return
-		}
-	}
-
 	route, err := r.client.GetRoute(ctx, plan.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading route after update", err.Error())
 		return
 	}
 
+	plannedHold := plan.HoldOnCircuitOpen
 	mapRouteToState(ctx, route, &plan, &resp.Diagnostics)
+	// A known planned value must be the applied one. It is null when the state predates the
+	// attribute and was not refreshed; the next refresh fills it in.
+	if !plannedHold.IsUnknown() {
+		plan.HoldOnCircuitOpen = plannedHold
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// buildUpdateRouteRequest builds the PATCH body. Settings with a default (priority, the notify
-// flags, thresholds, hold_on_circuit_open) are always sent. Optional ones are sent when they
-// changed, with the API's clear value when removed from configuration. The wiring fields
-// (source_id, destination_id, transform_id, failover_destination_ids) are sent only when they
-// changed: the API checks the events:send permission whenever one is given for a route that feeds
-// a bridge destination, and a rename must not need it.
+// buildUpdateRouteRequest builds the PATCH body, apart from hold_on_circuit_open, which Update adds
+// from configuration. Settings with a default (priority, the notify flags, thresholds) are always
+// sent. Optional ones are sent when they changed, with the API's clear value when removed from
+// configuration. The wiring fields (source_id, destination_id, transform_id,
+// failover_destination_ids) are sent only when they changed: the API checks the events:send
+// permission whenever one is given for a route that feeds a bridge destination, and a rename must
+// not need it.
 func buildUpdateRouteRequest(ctx context.Context, plan, state *RouteResourceModel) (client.UpdateRouteRequest, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	updateReq := client.UpdateRouteRequest{
@@ -387,7 +402,6 @@ func buildUpdateRouteRequest(ctx context.Context, plan, state *RouteResourceMode
 		NotifyOnRecovery:      knownBool(plan.NotifyOnRecovery),
 		FailureThreshold:      knownInt(plan.FailureThreshold),
 		FailoverAfterAttempts: knownInt(plan.FailoverAfterAttempts),
-		HoldOnCircuitOpen:     holdOnCircuitOpenValue(plan.HoldOnCircuitOpen),
 	}
 	if !plan.SourceID.Equal(state.SourceID) {
 		updateReq.SourceID = knownString(plan.SourceID)

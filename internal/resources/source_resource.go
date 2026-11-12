@@ -378,8 +378,14 @@ func (r *SourceResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	plannedSecret, plannedToken := plan.SigningSecret, plan.VerifyToken
+	plannedSecret, plannedToken, plannedCatalog := plan.SigningSecret, plan.VerifyToken, plan.CatalogProvider
 	mapSourceToState(ctx, source, &plan, &resp.Diagnostics)
+	// An update never changes catalog_provider, so a known planned value (the prior state's) stands.
+	// It is null when the state predates the attribute and was not refreshed (-refresh=false after
+	// upgrading); the next refresh fills it in.
+	if !plannedCatalog.IsUnknown() {
+		plan.CatalogProvider = plannedCatalog
+	}
 
 	// A credential that was sent is stored as sent. One that wasn't keeps its planned value when
 	// that is known (it equals the prior state), and is read back from the API only when the plan
