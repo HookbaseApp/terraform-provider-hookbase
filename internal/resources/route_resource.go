@@ -143,11 +143,14 @@ func (r *RouteResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 			"notify_emails": schema.StringAttribute{
 				Description: "Comma-separated email addresses that receive the route's notifications, for " +
-					"example \"oncall@example.com, team@example.com\". Each entry must be an email address. " +
-					"The API trims the entries, keeps only the first of an address listed twice (in any " +
-					"letter case), and returns the list joined with \", \"; that shows no diff as long as " +
-					"it lists the same addresses in the same order as the configured value. Removing the " +
-					"attribute clears the list.",
+					"example \"oncall@example.com, team@example.com\". At most 20 addresses, each an email " +
+					"address of at most 254 characters. The API trims the entries, keeps only the first of " +
+					"an address listed twice (in any letter case), and returns the list joined with \", \"; " +
+					"that shows no diff as long as it lists the same addresses in the same order as the " +
+					"configured value. After an import there is no configured value to compare with, so a " +
+					"value written differently from the API's (\"a@example.com,b@example.com\") shows a " +
+					"one-time update in the next plan, which changes nothing. Write the list the API's way, " +
+					"joined with \", \", to avoid it. Removing the attribute clears the list.",
 				Optional: true,
 				Validators: []validator.String{
 					notifyEmailsValidator{},

@@ -694,6 +694,24 @@ func TestAccRouteResource_notifyEmails(t *testing.T) {
 				),
 			},
 			{
+				// The same list written the API's way, joined with ", ".
+				Config: testAccRouteConfig(srcSlug, destSlug, `
+  name              = "tf-acc-rtn"
+  notify_on_failure = true
+  notify_emails     = "ops@example.com, oncall@example.com"`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(rt, "notify_emails", "ops@example.com, oncall@example.com"),
+					testAccCheckRouteNotifyEmails(rt, "ops@example.com", "oncall@example.com"),
+				),
+			},
+			{
+				// An import has no configured text to keep, so it reads the API's ", "-joined
+				// list. Written that way, the import matches the state exactly.
+				ResourceName:      rt,
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+			{
 				// Removed from configuration: cleared on the server.
 				Config: testAccRouteConfig(srcSlug, destSlug, `
   name              = "tf-acc-rtn"

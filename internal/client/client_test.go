@@ -7,10 +7,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode"
 )
 
 func TestNew(t *testing.T) {
@@ -645,5 +647,40 @@ func TestIsNotFound(t *testing.T) {
 	}
 	if IsNotFound(fmt.Errorf("wrapped: %w", &StatusError{StatusCode: 500})) || !IsNotFound(fmt.Errorf("wrapped: %w", err)) {
 		t.Error("IsNotFound must look through wrapping and match only 404")
+	}
+}
+
+// The API trims entries with JavaScript's trim(). These are the code points it strips, listed by
+// running String.fromCodePoint(c).trim() === "" over every code point in Node 22.
+var jsTrimmed = []rune{
+	0x9, 0xa, 0xb, 0xc, 0xd, 0x20, 0xa0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005,
+	0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff,
+}
+
+func TestEmailListTrimsLikeJavaScript(t *testing.T) {
+	want := map[rune]bool{}
+	for _, r := range jsTrimmed {
+		want[r] = true
+	}
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if r >= 0xd800 && r <= 0xdfff {
+			continue
+		}
+		if isJSTrimSpace(r) != want[r] {
+			t.Errorf("isJSTrimSpace(%U) = %v, want %v", r, !want[r], want[r])
+		}
+	}
+
+	for in, want := range map[string][]string{
+		"\ufeffops@example.com, dev@example.com\ufeff":            {"ops@example.com", "dev@example.com"},
+		"\u00a0ops@example.com\u3000,\u2028dev@example.com\u2029": {"ops@example.com", "dev@example.com"},
+		// NEL is trimmed by Go's unicode.IsSpace but kept by trim(), so it stays (and the API
+		// rejects the address). A zero-width space is not whitespace to either.
+		"\u0085ops@example.com": {"\u0085ops@example.com"},
+		"\u200bops@example.com": {"\u200bops@example.com"},
+	} {
+		if got := ParseEmailList(in); !slices.Equal(got, want) {
+			t.Errorf("ParseEmailList(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

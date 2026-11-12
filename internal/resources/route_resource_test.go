@@ -3,6 +3,7 @@ package resources
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -725,5 +726,34 @@ func TestRouteNotifyEmails_Validator(t *testing.T) {
 	}
 	if bad := validate(types.StringUnknown()); len(bad) != 0 {
 		t.Errorf("unknown value refused: %v", bad)
+	}
+
+	// The API's limits: 20 addresses after repeats are dropped, 254 characters an address.
+	list := func(n int) []string {
+		var out []string
+		for i := range n {
+			out = append(out, fmt.Sprintf("user%d@example.com", i))
+		}
+		return out
+	}
+	twenty := strings.Join(list(20), ", ")
+	for value, want := range map[string]int{
+		twenty:                                    0,
+		twenty + ", USER0@example.com":            0, // a repeat counts once
+		strings.Join(list(21), ","):               1,
+		strings.Repeat("a", 242) + "@example.com": 0, // 254 characters
+		strings.Repeat("a", 243) + "@example.com": 1, // 255
+		// JavaScript counts UTF-16 code units: U+1F600 is two, so this is 255 though 254 runes.
+		strings.Repeat("a", 241) + "\U0001F600@example.com": 1,
+	} {
+		bad := validate(types.StringValue(value))
+		if len(bad) != want {
+			t.Errorf("%.40q...: %d errors %v, want %d", value, len(bad), bad, want)
+		}
+		for _, b := range bad {
+			if len(b) > 200 {
+				t.Errorf("message not shortened: %q", b)
+			}
+		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -48,11 +49,30 @@ func notifyEmailsBody(configured string) *string {
 // the API would take.
 var emailAddressPattern = regexp.MustCompile(`^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$`)
 
-// notifyEmailsValidator checks each comma-separated entry of notify_emails.
+// The API's limits (MAX_NOTIFY_EMAILS and MAX_EMAIL_LENGTH in api/src/utils/notify-emails.ts).
+const (
+	// maxNotifyEmails is the most addresses a route may list, counted after repeats are dropped.
+	maxNotifyEmails = 20
+	// maxEmailLength is the RFC 5321 path limit, in UTF-16 code units as JavaScript counts length.
+	maxEmailLength = 254
+)
+
+// jsLength is len(s) as JavaScript counts it: UTF-16 code units.
+func jsLength(s string) int {
+	n := 0
+	for _, r := range s {
+		n += utf16.RuneLen(r)
+	}
+	return n
+}
+
+// notifyEmailsValidator checks notify_emails as the API will: at most maxNotifyEmails addresses,
+// each an email address of at most maxEmailLength characters.
 type notifyEmailsValidator struct{}
 
 func (notifyEmailsValidator) Description(_ context.Context) string {
-	return "each comma-separated entry must be an email address"
+	return fmt.Sprintf("at most %d comma-separated entries, each an email address of at most %d characters",
+		maxNotifyEmails, maxEmailLength)
 }
 
 func (v notifyEmailsValidator) MarkdownDescription(ctx context.Context) string {
@@ -63,7 +83,22 @@ func (notifyEmailsValidator) ValidateString(_ context.Context, req validator.Str
 	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
 		return
 	}
-	for _, entry := range client.ParseEmailList(req.ConfigValue.ValueString()) {
+	entries := client.ParseEmailList(req.ConfigValue.ValueString())
+	if len(entries) > maxNotifyEmails {
+		resp.Diagnostics.AddAttributeError(req.Path, "Too many email addresses",
+			fmt.Sprintf("notify_emails lists %d addresses; a route can notify at most %d. An address "+
+				"listed twice (in any letter case) counts once.", len(entries), maxNotifyEmails))
+	}
+	for _, entry := range entries {
+		if n := jsLength(entry); n > maxEmailLength {
+			shown := entry
+			if r := []rune(shown); len(r) > 64 {
+				shown = string(r[:64]) + "..."
+			}
+			resp.Diagnostics.AddAttributeError(req.Path, "Email address too long",
+				fmt.Sprintf("%q is %d characters long; an address can be at most %d.", shown, n, maxEmailLength))
+			continue
+		}
 		if !emailAddressPattern.MatchString(entry) {
 			resp.Diagnostics.AddAttributeError(req.Path, "Invalid email address",
 				fmt.Sprintf("%q is not an email address. notify_emails is a comma-separated list of "+

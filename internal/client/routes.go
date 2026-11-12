@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 type Route struct {
@@ -75,11 +76,15 @@ func (l *EmailList) UnmarshalJSON(b []byte) error {
 // (normalizeNotifyEmails in api/src/utils/notify-emails.ts): each entry trimmed, empty entries
 // dropped, and an address listed again in any letter case dropped, keeping the first spelling and
 // the order. It returns nil when no address is left.
+//
+// The case-insensitive key is strings.ToLower, which matches JavaScript's toLowerCase for ASCII.
+// They differ only on a few non-ASCII letters (U+0130, a word-final capital sigma), which the
+// API's address check rejects anyway.
 func ParseEmailList(s string) EmailList {
 	var out EmailList
 	seen := map[string]bool{}
 	for _, part := range strings.Split(s, ",") {
-		part = strings.TrimSpace(part)
+		part = strings.TrimFunc(part, isJSTrimSpace)
 		key := strings.ToLower(part)
 		if part == "" || seen[key] {
 			continue
@@ -88,6 +93,17 @@ func ParseEmailList(s string) EmailList {
 		out = append(out, part)
 	}
 	return out
+}
+
+// isJSTrimSpace reports whether JavaScript's String.prototype.trim, which the API trims each entry
+// with, strips r: the ECMAScript WhiteSpace and LineTerminator code points. That is
+// unicode.IsSpace plus U+FEFF (the byte order mark), less U+0085 (NEL), which trim keeps.
+func isJSTrimSpace(r rune) bool {
+	switch r {
+	case '\t', '\n', '\v', '\f', '\r', '\u2028', '\u2029', '\uFEFF':
+		return true
+	}
+	return unicode.Is(unicode.Zs, r)
 }
 
 type CreateRouteRequest struct {
