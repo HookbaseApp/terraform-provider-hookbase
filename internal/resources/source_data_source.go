@@ -21,6 +21,7 @@ type SourceDataSourceModel struct {
 	Name                    types.String `tfsdk:"name"`
 	Slug                    types.String `tfsdk:"slug"`
 	ProviderType            types.String `tfsdk:"provider_type"`
+	CatalogProvider         types.String `tfsdk:"catalog_provider"`
 	Description             types.String `tfsdk:"description"`
 	HasSigningSecret        types.Bool   `tfsdk:"has_signing_secret"`
 	VerifiesWithoutSecret   types.Bool   `tfsdk:"verifies_without_secret"`
@@ -56,6 +57,7 @@ func (d *SourceDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 			"name":                      schema.StringAttribute{Computed: true},
 			"slug":                      schema.StringAttribute{Optional: true, Computed: true, Description: "Source slug. Provide either id or slug."},
 			"provider_type":             schema.StringAttribute{Computed: true},
+			"catalog_provider":          schema.StringAttribute{Computed: true, Description: "The id of the provider-catalog entry the source was made from (such as github), or null."},
 			"description":               schema.StringAttribute{Computed: true},
 			"has_signing_secret":        schema.BoolAttribute{Computed: true, Description: "Whether a signing secret is stored for this source."},
 			"verifies_without_secret":   schema.BoolAttribute{Computed: true, Description: "True when the provider signs with a key it publishes (wise, wise-sandbox, aws-sns), so no signing secret is stored or needed."},
@@ -122,6 +124,7 @@ func mapSourceToDataSourceState(ctx context.Context, source *client.Source, stat
 	state.Name = types.StringValue(source.Name)
 	state.Slug = types.StringValue(source.Slug)
 	state.ProviderType = stringPtrToValue(source.Provider)
+	state.CatalogProvider = stringPtrToValue(source.CatalogProvider)
 	state.Description = stringPtrToValue(source.Description)
 	state.HasSigningSecret = types.BoolValue(source.HasSigningSecret)
 	state.VerifiesWithoutSecret = types.BoolValue(source.VerifiesWithoutSecret)

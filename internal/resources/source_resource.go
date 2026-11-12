@@ -41,6 +41,7 @@ type SourceResourceModel struct {
 	Name                    types.String `tfsdk:"name"`
 	Slug                    types.String `tfsdk:"slug"`
 	ProviderType            types.String `tfsdk:"provider_type"`
+	CatalogProvider         types.String `tfsdk:"catalog_provider"`
 	Description             types.String `tfsdk:"description"`
 	SigningSecret           types.String `tfsdk:"signing_secret"`
 	VerifyToken             types.String `tfsdk:"verify_token"`
@@ -105,6 +106,26 @@ func (r *SourceResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					"in place; switching to a provider whose secret the vendor issues needs signing_secret set " +
 					"in the same change.",
 				Optional: true,
+			},
+			"catalog_provider": schema.StringAttribute{
+				Description: "The provider-catalog entry the source is made from, by its id in " +
+					"GET /api/catalog/providers (for example stripe, github or salesforce). It records that the " +
+					"sender is that vendor, whose IP addresses every customer shares, so a bridge destination " +
+					"does not count the source's IP allowlist as proof of the sender. The API rejects an id " +
+					"that is not in the catalog. Set at create only: changing it forces a new resource (and " +
+					"so a new signing secret), and removing it from configuration keeps the recorded value. " +
+					"Null when the source was not made from a catalog entry.",
+				Optional: true,
+				Computed: true,
+				Validators: []validator.String{
+					stringvalidator.LengthBetween(1, 100),
+				},
+				PlanModifiers: []planmodifier.String{
+					// First, so an unset value plans as the recorded one rather than unknown, which
+					// RequiresReplace would read as a change.
+					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"description": schema.StringAttribute{
 				Description: "Source description.",
@@ -319,6 +340,11 @@ func (r *SourceResource) Read(ctx context.Context, req resource.ReadRequest, res
 	}
 
 	source, err := r.client.GetSource(ctx, state.ID.ValueString())
+	if client.IsNotFound(err) {
+		// Deleted outside Terraform: dropped from state, so the next plan creates it again.
+		resp.State.RemoveResource(ctx)
+		return
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading source", err.Error())
 		return
@@ -357,8 +383,14 @@ func (r *SourceResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	plannedSecret, plannedToken := plan.SigningSecret, plan.VerifyToken
+	plannedSecret, plannedToken, plannedCatalog := plan.SigningSecret, plan.VerifyToken, plan.CatalogProvider
 	mapSourceToState(ctx, source, &plan, &resp.Diagnostics)
+	// An update never changes catalog_provider, so a known planned value (the prior state's) stands.
+	// It is null when the state predates the attribute and was not refreshed (-refresh=false after
+	// upgrading); the next refresh fills it in.
+	if !plannedCatalog.IsUnknown() {
+		plan.CatalogProvider = plannedCatalog
+	}
 
 	// A credential that was sent is stored as sent. One that wasn't keeps its planned value when
 	// that is known (it equals the prior state), and is read back from the API only when the plan
@@ -477,6 +509,7 @@ func buildCreateSourceRequest(ctx context.Context, plan SourceResourceModel) (cl
 	}
 
 	createReq.Provider = knownString(plan.ProviderType)
+	createReq.CatalogProvider = knownString(plan.CatalogProvider)
 	createReq.Description = knownString(plan.Description)
 	createReq.SigningSecret = knownString(plan.SigningSecret)
 	createReq.VerifyToken = knownString(plan.VerifyToken)
@@ -546,7 +579,8 @@ func (r *SourceResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	}
 
 	err := r.client.DeleteSource(ctx, state.ID.ValueString())
-	if err != nil {
+	// A 404 means it is already gone, which is what Delete is for.
+	if err != nil && !client.IsNotFound(err) {
 		resp.Diagnostics.AddError("Error deleting source", err.Error())
 	}
 }
@@ -562,6 +596,7 @@ func mapSourceToState(ctx context.Context, source *client.Source, state *SourceR
 	state.Name = types.StringValue(source.Name)
 	state.Slug = types.StringValue(source.Slug)
 	state.ProviderType = stringPtrToValue(source.Provider)
+	state.CatalogProvider = stringPtrToValue(source.CatalogProvider)
 	state.Description = stringPtrToValue(source.Description)
 	state.HasSigningSecret = types.BoolValue(source.HasSigningSecret)
 	state.VerifiesWithoutSecret = types.BoolValue(source.VerifiesWithoutSecret)
@@ -588,11 +623,11 @@ func mapSourceToState(ctx context.Context, source *client.Source, state *SourceR
 		state.RateLimitPerMinute = types.Int64Null()
 	}
 
-	state.IPAllowlist = sliceToStringList(ctx, source.IPAllowlist, diags)
-	state.IPDenylist = sliceToStringList(ctx, source.IPDenylist, diags)
-	state.EncryptFields = sliceToStringList(ctx, source.EncryptFields, diags)
-	state.MaskFields = sliceToStringList(ctx, source.MaskFields, diags)
-	state.AllowedMethods = sliceToStringList(ctx, source.AllowedMethods, diags)
+	state.IPAllowlist = listToState(ctx, source.IPAllowlist, state.IPAllowlist, diags)
+	state.IPDenylist = listToState(ctx, source.IPDenylist, state.IPDenylist, diags)
+	state.EncryptFields = listToState(ctx, source.EncryptFields, state.EncryptFields, diags)
+	state.MaskFields = listToState(ctx, source.MaskFields, state.MaskFields, diags)
+	state.AllowedMethods = listToState(ctx, source.AllowedMethods, state.AllowedMethods, diags)
 }
 
 // Request-building helpers: known* return nil (omit) for a null or unknown value; nullable*
@@ -687,4 +722,16 @@ func sliceToStringList(ctx context.Context, items []string, diags *diag.Diagnost
 	list, d := types.ListValueFrom(ctx, types.StringType, items)
 	diags.Append(d...)
 	return list
+}
+
+// listToState reads a list the API reports for an Optional attribute. The API answers [] both for
+// a list that was never set and for one set to [], so an empty answer keeps prior (the planned
+// value, or the state being refreshed) when that is itself an empty list, and is null otherwise.
+// Reading an explicit [] back as null failed the apply with "Provider produced inconsistent
+// result after apply".
+func listToState(ctx context.Context, items []string, prior types.List, diags *diag.Diagnostics) types.List {
+	if len(items) == 0 && !prior.IsNull() && !prior.IsUnknown() && len(prior.Elements()) == 0 {
+		return prior
+	}
+	return sliceToStringList(ctx, items, diags)
 }

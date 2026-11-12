@@ -50,6 +50,17 @@ resource "hookbase_source" "poller" {
   allowed_methods = ["GET", "HEAD"]
 }
 
+# Source for a catalog vendor that has no verifier of its own (Salesforce), checked as Custom
+# HMAC. catalog_provider records the vendor, so a bridge destination does not count an IP
+# allowlist on this source as proof of the sender: Salesforce sends every customer's webhooks
+# from the same addresses.
+resource "hookbase_source" "salesforce" {
+  name             = "salesforce"
+  slug             = "salesforce"
+  provider_type    = "custom"
+  catalog_provider = "salesforce"
+}
+
 # WhatsApp source: Hookbase generates the Meta "Verify token" unless verify_token is set.
 # signing_secret is the Meta App Secret, which Meta issues.
 resource "hookbase_source" "whatsapp" {
@@ -76,6 +87,7 @@ output "whatsapp_verify_token" {
 ### Optional
 
 - `allowed_methods` (List of String) HTTP methods the ingest endpoint accepts: GET, POST, PUT, PATCH, DELETE, HEAD. Omit or set to an empty list to accept any method.
+- `catalog_provider` (String) The provider-catalog entry the source is made from, by its id in GET /api/catalog/providers (for example stripe, github or salesforce). It records that the sender is that vendor, whose IP addresses every customer shares, so a bridge destination does not count the source's IP allowlist as proof of the sender. The API rejects an id that is not in the catalog. Set at create only: changing it forces a new resource (and so a new signing secret), and removing it from configuration keeps the recorded value. Null when the source was not made from a catalog entry.
 - `dedup_custom_header` (String) Custom header name for idempotency key dedup strategy.
 - `dedup_enabled` (Boolean) Enable event deduplication.
 - `dedup_strategy` (String) Deduplication strategy: auto, provider_id, payload_hash, idempotency_key, or none.

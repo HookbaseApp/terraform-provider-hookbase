@@ -22,6 +22,10 @@ resource "hookbase_webhook_endpoint" "acme_orders" {
 
   circuit_failure_threshold = 10
   circuit_cooldown_seconds  = 120
+
+  # Hold messages while the circuit is open and send them once the endpoint recovers. Left unset,
+  # hold_on_circuit_open keeps the endpoint's current value (true for a new endpoint).
+  hold_on_circuit_open = true
 }
 ```
 
@@ -42,6 +46,7 @@ resource "hookbase_webhook_endpoint" "acme_orders" {
 - `description` (String) Endpoint description.
 - `disabled_reason` (String) Reason the endpoint was disabled.
 - `headers` (String) Custom headers as a JSON array of {name, value} objects.
+- `hold_on_circuit_open` (Boolean) While the endpoint's circuit is open, hold its messages and send them once the endpoint recovers, instead of dead-lettering them. When not set, the endpoint keeps its current value (a new endpoint gets the API default, true), so a value changed outside Terraform is left alone. FIFO and polling endpoints never hold. Turning it off does not release messages already held; they are dead-lettered on their next attempt while the circuit stays open.
 - `is_disabled` (Boolean) Whether the endpoint is disabled.
 - `rate_limit_per_second` (Number) Rate limit per second (0 = unlimited).
 - `retry_delays` (String) Custom retry delays as a JSON array of integers (seconds).

@@ -24,6 +24,7 @@ Look up an existing Hookbase destination by ID or slug.
 
 - `auth_type` (String)
 - `created_at` (String)
+- `has_signing_secret` (Boolean) Whether the destination signs its deliveries (true for http destinations). The secret itself is not exposed by the data source.
 - `is_active` (Boolean)
 - `method` (String)
 - `name` (String)

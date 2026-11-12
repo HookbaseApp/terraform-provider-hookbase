@@ -23,7 +23,7 @@ resource "hookbase_route" "stripe_to_api" {
   priority       = 1
 
   notify_on_failure = true
-  notify_emails     = "oncall@example.com"
+  notify_emails     = "oncall@example.com, payments-team@example.com"
   failure_threshold = 5
 }
 
@@ -32,6 +32,19 @@ resource "hookbase_route" "github_to_slack" {
   name           = "github-to-slack"
   source_id      = hookbase_source.github.id
   destination_id = hookbase_destination.slack.id
+}
+
+# Route that dead-letters deliveries while the destination's circuit is open, instead of holding them
+# until it recovers. Left unset, hold_on_circuit_open keeps the route's current value (true for a new
+# route).
+resource "hookbase_route" "audit_log" {
+  name                 = "audit-log"
+  source_id            = hookbase_source.github.id
+  destination_id       = hookbase_destination.api.id
+  hold_on_circuit_open = false
+
+  circuit_failure_threshold = 10
+  circuit_cooldown_seconds  = 300
 }
 ```
 
@@ -46,18 +59,19 @@ resource "hookbase_route" "github_to_slack" {
 
 ### Optional
 
-- `circuit_cooldown_seconds` (Number) Seconds to wait before probing after circuit opens.
-- `circuit_failure_threshold` (Number) Number of failures to open the circuit.
-- `circuit_probe_success_threshold` (Number) Number of successful probes to close the circuit.
-- `expected_response` (String) Expected response configuration as a JSON string.
+- `circuit_cooldown_seconds` (Number) Seconds to wait before probing after the circuit opens (30-3600). Changing a circuit setting on an existing route needs the circuit breaker plan feature. The API cannot clear these settings, so removing one from configuration keeps its current value.
+- `circuit_failure_threshold` (Number) Number of failures to open the circuit (1-50). See circuit_cooldown_seconds.
+- `circuit_probe_success_threshold` (Number) Number of successful probes to close the circuit (1-10). See circuit_cooldown_seconds.
+- `expected_response` (String) Expected response configuration as a JSON object (use jsonencode). Key order and formatting are ignored when comparing with the API's copy.
 - `failover_after_attempts` (Number) Number of delivery attempts before failing over.
 - `failover_destination_ids` (List of String) IDs of destinations to failover to.
 - `failure_threshold` (Number) Number of consecutive failures before triggering a notification.
-- `filter_conditions` (String) Inline filter conditions as a JSON string.
+- `filter_conditions` (String) Inline filter conditions as a JSON array (use jsonencode). Key order and formatting are ignored when comparing with the API's copy.
 - `filter_id` (String) ID of a saved filter to apply.
 - `filter_logic` (String) Logic for combining filter conditions: AND or OR.
+- `hold_on_circuit_open` (Boolean) While the route's circuit is open, hold its deliveries and send them once the destination recovers, instead of dead-lettering them. When not set, the route keeps its current value (a new route gets the API default, true), so a value changed outside Terraform is left alone. Turning it off does not release deliveries already held; they are dead-lettered on their next attempt while the circuit stays open.
 - `is_active` (Boolean) Whether the route is active.
-- `notify_emails` (String) Comma-separated email addresses for notifications.
+- `notify_emails` (String) Comma-separated email addresses that receive the route's notifications, for example "oncall@example.com, team@example.com". At most 20 addresses, each an email address of at most 254 characters. The API trims the entries, keeps only the first of an address listed twice (in any letter case), and returns the list joined with ", "; that shows no diff as long as it lists the same addresses in the same order as the configured value. After an import there is no configured value to compare with, so a value written differently from the API's ("a@example.com,b@example.com") shows a one-time update in the next plan, which changes nothing. Write the list the API's way, joined with ", ", to avoid it. Removing the attribute clears the list.
 - `notify_on_failure` (Boolean) Send notification on delivery failure.
 - `notify_on_recovery` (Boolean) Send notification when a failing route recovers.
 - `notify_on_success` (Boolean) Send notification on delivery success.

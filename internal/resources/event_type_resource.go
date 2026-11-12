@@ -212,6 +212,11 @@ func (r *EventTypeResource) Read(ctx context.Context, req resource.ReadRequest, 
 	}
 
 	eventType, err := r.client.GetEventType(ctx, state.ID.ValueString())
+	if client.IsNotFound(err) {
+		// Deleted outside Terraform: dropped from state, so the next plan creates it again.
+		resp.State.RemoveResource(ctx)
+		return
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading event type", err.Error())
 		return
@@ -289,7 +294,8 @@ func (r *EventTypeResource) Delete(ctx context.Context, req resource.DeleteReque
 	}
 
 	err := r.client.DeleteEventType(ctx, state.ID.ValueString())
-	if err != nil {
+	// A 404 means it is already gone, which is what Delete is for.
+	if err != nil && !client.IsNotFound(err) {
 		resp.Diagnostics.AddError("Error deleting event type", err.Error())
 	}
 }

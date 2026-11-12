@@ -26,8 +26,11 @@ type DestinationDataSourceModel struct {
 	Type        types.String `tfsdk:"type"`
 	UseStaticIP types.Bool   `tfsdk:"use_static_ip"`
 	IsActive    types.Bool   `tfsdk:"is_active"`
-	CreatedAt   types.String `tfsdk:"created_at"`
-	UpdatedAt   types.String `tfsdk:"updated_at"`
+	// HasSigningSecret only: reading the secret takes the resource (or the reveal-secret endpoint),
+	// so that a lookup never puts it in state.
+	HasSigningSecret types.Bool   `tfsdk:"has_signing_secret"`
+	CreatedAt        types.String `tfsdk:"created_at"`
+	UpdatedAt        types.String `tfsdk:"updated_at"`
 }
 
 func NewDestinationDataSource() datasource.DataSource {
@@ -52,8 +55,10 @@ func (d *DestinationDataSource) Schema(_ context.Context, _ datasource.SchemaReq
 			"type":          schema.StringAttribute{Computed: true},
 			"use_static_ip": schema.BoolAttribute{Computed: true},
 			"is_active":     schema.BoolAttribute{Computed: true},
-			"created_at":    schema.StringAttribute{Computed: true},
-			"updated_at":    schema.StringAttribute{Computed: true},
+			"has_signing_secret": schema.BoolAttribute{Computed: true, Description: "Whether the destination signs its " +
+				"deliveries (true for http destinations). The secret itself is not exposed by the data source."},
+			"created_at": schema.StringAttribute{Computed: true},
+			"updated_at": schema.StringAttribute{Computed: true},
 		},
 	}
 }
@@ -106,6 +111,7 @@ func (d *DestinationDataSource) Read(ctx context.Context, req datasource.ReadReq
 	config.Type = types.StringValue(dest.Type)
 	config.UseStaticIP = types.BoolValue(dest.UseStaticIP)
 	config.IsActive = types.BoolValue(dest.IsActive)
+	config.HasSigningSecret = types.BoolValue(dest.HasSigningSecret)
 	config.CreatedAt = types.StringValue(dest.CreatedAt)
 	config.UpdatedAt = types.StringValue(dest.UpdatedAt)
 

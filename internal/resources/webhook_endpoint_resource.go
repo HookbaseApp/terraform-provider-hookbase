@@ -9,10 +9,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hookbase/terraform-provider-hookbase/internal/client"
 )
@@ -41,6 +43,7 @@ type WebhookEndpointResourceModel struct {
 	CircuitFailureThreshold types.Int64  `tfsdk:"circuit_failure_threshold"`
 	CircuitSuccessThreshold types.Int64  `tfsdk:"circuit_success_threshold"`
 	CircuitCooldownSeconds  types.Int64  `tfsdk:"circuit_cooldown_seconds"`
+	HoldOnCircuitOpen       types.Bool   `tfsdk:"hold_on_circuit_open"`
 	IsDisabled              types.Bool   `tfsdk:"is_disabled"`
 	DisabledReason          types.String `tfsdk:"disabled_reason"`
 	Secret                  types.String `tfsdk:"secret"`
@@ -133,6 +136,19 @@ func (r *WebhookEndpointResource) Schema(_ context.Context, _ resource.SchemaReq
 				Optional:    true,
 				Computed:    true,
 				Default:     int64default.StaticInt64(60),
+			},
+			"hold_on_circuit_open": schema.BoolAttribute{
+				Description: "While the endpoint's circuit is open, hold its messages and send them once the " +
+					"endpoint recovers, instead of dead-lettering them. When not set, the endpoint keeps its " +
+					"current value (a new endpoint gets the API default, true), so a value changed outside " +
+					"Terraform is left alone. FIFO and polling endpoints never hold. Turning it off does not " +
+					"release messages already held; they are dead-lettered on their next attempt while the " +
+					"circuit stays open.",
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"is_disabled": schema.BoolAttribute{
 				Description: "Whether the endpoint is disabled.",
@@ -233,6 +249,11 @@ func (r *WebhookEndpointResource) Create(ctx context.Context, req resource.Creat
 		v := int(plan.CircuitCooldownSeconds.ValueInt64())
 		createReq.CircuitCooldownSeconds = &v
 	}
+	// Sent only when configured; otherwise the API's default applies and is read back.
+	createReq.HoldOnCircuitOpen = configuredBool(ctx, req.Config, path.Root("hold_on_circuit_open"), &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	endpoint, err := r.client.CreateWebhookEndpoint(ctx, createReq)
 	if err != nil {
@@ -266,6 +287,11 @@ func (r *WebhookEndpointResource) Read(ctx context.Context, req resource.ReadReq
 	existingSecret := state.Secret
 
 	endpoint, err := r.client.GetWebhookEndpoint(ctx, state.ID.ValueString())
+	if client.IsNotFound(err) {
+		// Deleted outside Terraform: dropped from state, so the next plan creates it again.
+		resp.State.RemoveResource(ctx)
+		return
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading webhook endpoint", err.Error())
 		return
@@ -350,6 +376,11 @@ func (r *WebhookEndpointResource) Update(ctx context.Context, req resource.Updat
 		v := int(plan.CircuitCooldownSeconds.ValueInt64())
 		updateReq.CircuitCooldownSeconds = &v
 	}
+	// Sent only when configured, so a value changed outside Terraform is kept.
+	updateReq.HoldOnCircuitOpen = configuredBool(ctx, req.Config, path.Root("hold_on_circuit_open"), &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	endpoint, err := r.client.UpdateWebhookEndpoint(ctx, plan.ID.ValueString(), updateReq)
 	if err != nil {
@@ -357,7 +388,13 @@ func (r *WebhookEndpointResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 
+	plannedHold := plan.HoldOnCircuitOpen
 	mapWebhookEndpointToState(endpoint, &plan, &resp.Diagnostics)
+	// A known planned value must be the applied one. It is null when the state predates the
+	// attribute and was not refreshed; the next refresh fills it in.
+	if !plannedHold.IsUnknown() {
+		plan.HoldOnCircuitOpen = plannedHold
+	}
 
 	// Preserve secret from state since update response doesn't include it
 	if !currentState.Secret.IsNull() && !currentState.Secret.IsUnknown() {
@@ -375,7 +412,8 @@ func (r *WebhookEndpointResource) Delete(ctx context.Context, req resource.Delet
 	}
 
 	err := r.client.DeleteWebhookEndpoint(ctx, state.ID.ValueString())
-	if err != nil {
+	// A 404 means it is already gone, which is what Delete is for.
+	if err != nil && !client.IsNotFound(err) {
 		resp.Diagnostics.AddError("Error deleting webhook endpoint", err.Error())
 	}
 }
@@ -400,6 +438,7 @@ func mapWebhookEndpointToState(ep *client.WebhookEndpoint, state *WebhookEndpoin
 	state.CircuitFailureThreshold = types.Int64Value(int64(ep.CircuitFailureThreshold))
 	state.CircuitSuccessThreshold = types.Int64Value(int64(ep.CircuitSuccessThreshold))
 	state.CircuitCooldownSeconds = types.Int64Value(int64(ep.CircuitCooldownSeconds))
+	state.HoldOnCircuitOpen = types.BoolValue(ep.HoldOnCircuitOpen == nil || *ep.HoldOnCircuitOpen)
 	state.IsDisabled = types.BoolValue(ep.IsDisabled)
 	state.DisabledReason = stringPtrToValue(ep.DisabledReason)
 	state.SecretVersion = types.Int64Value(int64(ep.SecretVersion))
@@ -432,4 +471,12 @@ func mapWebhookEndpointToState(ep *client.WebhookEndpoint, state *WebhookEndpoin
 	} else {
 		state.RetryDelays = types.StringNull()
 	}
+}
+
+// configuredBool is a bool attribute as set in configuration, or nil when it is not set there. An
+// Optional+Computed attribute's plan cannot tell the two apart once it holds the prior state.
+func configuredBool(ctx context.Context, config tfsdk.Config, p path.Path, diags *diag.Diagnostics) *bool {
+	var v types.Bool
+	diags.Append(config.GetAttribute(ctx, p, &v)...)
+	return knownBool(v)
 }

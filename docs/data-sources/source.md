@@ -24,6 +24,7 @@ Look up an existing Hookbase source by ID or slug.
 
 - `allowed_methods` (List of String)
 - `awaiting_signing_secret` (Boolean) True when no secret is set and only the vendor can issue one (e.g. stripe before it is pasted, or asana/notion until the ingest URL is registered); events are accepted unverified until it is set.
+- `catalog_provider` (String) The id of the provider-catalog entry the source was made from (such as github), or null.
 - `created_at` (String)
 - `dedup_enabled` (Boolean)
 - `dedup_strategy` (String)
