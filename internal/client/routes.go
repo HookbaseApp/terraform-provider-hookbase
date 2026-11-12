@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 type Route struct {
@@ -22,7 +23,7 @@ type Route struct {
 	NotifyOnFailure              bool            `json:"notifyOnFailure"`
 	NotifyOnSuccess              bool            `json:"notifyOnSuccess"`
 	NotifyOnRecovery             bool            `json:"notifyOnRecovery"`
-	NotifyEmails                 *string         `json:"notifyEmails"`
+	NotifyEmails                 EmailList       `json:"notifyEmails"`
 	FailureThreshold             *int            `json:"failureThreshold"`
 	FailoverDestinationIds       []string        `json:"failoverDestinationIds"`
 	FailoverAfterAttempts        *int            `json:"failoverAfterAttempts"`
@@ -35,6 +36,58 @@ type Route struct {
 	HoldOnCircuitOpen *bool  `json:"holdOnCircuitOpen"`
 	CreatedAt         string `json:"createdAt"`
 	UpdatedAt         string `json:"updatedAt"`
+}
+
+// EmailList is a route's notifyEmails as GET answers it. The API stores the addresses as a JSON
+// array and answers them as one string joined with ", ". An API from before that change answers
+// the column as it is stored: its JSON text inside a string ("[\"a@example.com\"]"), or the array
+// itself. All of these decode to the addresses the way ParseEmailList reads them; null and ""
+// decode to none. Requests still send the comma-separated string.
+type EmailList []string
+
+func (l *EmailList) UnmarshalJSON(b []byte) error {
+	var s *string
+	if err := json.Unmarshal(b, &s); err == nil {
+		switch {
+		case s == nil:
+			*l = nil
+		case strings.HasPrefix(strings.TrimSpace(*s), "["):
+			var items []string
+			if json.Unmarshal([]byte(*s), &items) == nil {
+				*l = ParseEmailList(strings.Join(items, ","))
+				return nil
+			}
+			*l = ParseEmailList(*s)
+		default:
+			*l = ParseEmailList(*s)
+		}
+		return nil
+	}
+	var items []string
+	if err := json.Unmarshal(b, &items); err != nil {
+		return fmt.Errorf("notifyEmails: want a string or a list of strings, got %s", b)
+	}
+	*l = ParseEmailList(strings.Join(items, ","))
+	return nil
+}
+
+// ParseEmailList reads a comma-separated list of addresses the way the API does
+// (normalizeNotifyEmails in api/src/utils/notify-emails.ts): each entry trimmed, empty entries
+// dropped, and an address listed again in any letter case dropped, keeping the first spelling and
+// the order. It returns nil when no address is left.
+func ParseEmailList(s string) EmailList {
+	var out EmailList
+	seen := map[string]bool{}
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		key := strings.ToLower(part)
+		if part == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, part)
+	}
+	return out
 }
 
 type CreateRouteRequest struct {

@@ -356,3 +356,34 @@ func TestOrgURLConstruction(t *testing.T) {
 		t.Errorf("request path = %q, want %q", gotPath, expected)
 	}
 }
+
+// A route's notifyEmails decodes from the API's joined string and from the stored JSON array an
+// older API answers, trimmed and with empty entries dropped.
+func TestEmailListDecodes(t *testing.T) {
+	for raw, want := range map[string][]string{
+		`null`:                               nil,
+		`""`:                                 nil,
+		`" , "`:                              nil,
+		`"a@example.com, b@example.com"`:     {"a@example.com", "b@example.com"},
+		`"a@example.com,,b@example.com,"`:    {"a@example.com", "b@example.com"},
+		`["a@example.com"," b@example.com"]`: {"a@example.com", "b@example.com"},
+		// Before the fix, GET answered the JSONB column as its text.
+		`"[\"a@example.com\", \"b@example.com\"]"`: {"a@example.com", "b@example.com"},
+		// Repeats in any letter case count once, first spelling kept, as the API stores them.
+		`"A@example.com, b@example.com, a@EXAMPLE.com"`: {"A@example.com", "b@example.com"},
+		`[]`: nil,
+	} {
+		var r Route
+		if err := json.Unmarshal([]byte(`{"notifyEmails":`+raw+`}`), &r); err != nil {
+			t.Errorf("%s: %v", raw, err)
+			continue
+		}
+		if fmt.Sprint([]string(r.NotifyEmails)) != fmt.Sprint(want) || len(r.NotifyEmails) != len(want) {
+			t.Errorf("%s decoded to %q, want %q", raw, r.NotifyEmails, want)
+		}
+	}
+	var r Route
+	if err := json.Unmarshal([]byte(`{"notifyEmails":42}`), &r); err == nil {
+		t.Error("a number decoded without error")
+	}
+}

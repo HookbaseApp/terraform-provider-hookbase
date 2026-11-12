@@ -8,7 +8,7 @@ resource "hookbase_route" "stripe_to_api" {
   priority       = 1
 
   notify_on_failure = true
-  notify_emails     = "oncall@example.com"
+  notify_emails     = "oncall@example.com, payments-team@example.com"
   failure_threshold = 5
 }
 

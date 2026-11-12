@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hookbase/terraform-provider-hookbase/internal/client"
 )
@@ -141,8 +142,16 @@ func (r *RouteResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Default:     booldefault.StaticBool(false),
 			},
 			"notify_emails": schema.StringAttribute{
-				Description: "Comma-separated email addresses for notifications.",
-				Optional:    true,
+				Description: "Comma-separated email addresses that receive the route's notifications, for " +
+					"example \"oncall@example.com, team@example.com\". Each entry must be an email address. " +
+					"The API trims the entries, keeps only the first of an address listed twice (in any " +
+					"letter case), and returns the list joined with \", \"; that shows no diff as long as " +
+					"it lists the same addresses in the same order as the configured value. Removing the " +
+					"attribute clears the list.",
+				Optional: true,
+				Validators: []validator.String{
+					notifyEmailsValidator{},
+				},
 			},
 			"failure_threshold": schema.Int64Attribute{
 				Description: "Number of consecutive failures before triggering a notification.",
@@ -277,8 +286,7 @@ func (r *RouteResource) Create(ctx context.Context, req resource.CreateRequest, 
 		createReq.NotifyOnRecovery = &v
 	}
 	if !plan.NotifyEmails.IsNull() {
-		v := plan.NotifyEmails.ValueString()
-		createReq.NotifyEmails = &v
+		createReq.NotifyEmails = notifyEmailsBody(plan.NotifyEmails.ValueString())
 	}
 	if !plan.FailureThreshold.IsNull() {
 		v := int(plan.FailureThreshold.ValueInt64())
@@ -425,7 +433,9 @@ func buildUpdateRouteRequest(ctx context.Context, plan, state *RouteResourceMode
 	updateReq.FilterID = changedOrCleared(plan.FilterID, state.FilterID)
 	updateReq.TransformID = changedOrCleared(plan.TransformID, state.TransformID)
 	updateReq.SchemaID = changedOrCleared(plan.SchemaID, state.SchemaID)
-	updateReq.NotifyEmails = changedOrCleared(plan.NotifyEmails, state.NotifyEmails)
+	if v := changedOrCleared(plan.NotifyEmails, state.NotifyEmails); v != nil {
+		updateReq.NotifyEmails = notifyEmailsBody(*v)
+	}
 
 	// The API applies filterLogic only together with filterConditions, so a change to either sends
 	// both.
@@ -513,11 +523,7 @@ func mapRouteToState(ctx context.Context, route *client.Route, state *RouteResou
 	state.NotifyOnSuccess = types.BoolValue(route.NotifyOnSuccess)
 	state.NotifyOnRecovery = types.BoolValue(route.NotifyOnRecovery)
 
-	if route.NotifyEmails != nil && *route.NotifyEmails != "" {
-		state.NotifyEmails = types.StringValue(*route.NotifyEmails)
-	} else {
-		state.NotifyEmails = types.StringNull()
-	}
+	state.NotifyEmails = notifyEmailsToState(state.NotifyEmails, route.NotifyEmails)
 
 	if route.FailureThreshold != nil {
 		state.FailureThreshold = types.Int64Value(int64(*route.FailureThreshold))

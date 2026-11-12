@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hookbase/terraform-provider-hookbase/internal/client"
@@ -521,5 +522,208 @@ func TestWebhookEndpointHoldOnCircuitOpen(t *testing.T) {
 	}
 	if v, ok := lastPatch["holdOnCircuitOpen"]; ok {
 		t.Errorf("patch body carried holdOnCircuitOpen = %v though it is not configured", v)
+	}
+}
+
+// updateRouteFrom applies plan over prior with the given configuration and returns the new state.
+func updateRouteFrom(t *testing.T, r *RouteResource, prior tfsdk.State, plan, config RouteResourceModel) (tfsdk.State, RouteResourceModel) {
+	t.Helper()
+	resp := resource.UpdateResponse{State: nullStateOf(t, r)}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: planOf(t, r, &plan), Config: configOf(t, r, &config), State: prior}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Update: %v", resp.Diagnostics)
+	}
+	return resp.State, modelOf[RouteResourceModel](t, resp.State)
+}
+
+func readRoute(t *testing.T, r *RouteResource, prior tfsdk.State) RouteResourceModel {
+	t.Helper()
+	resp := resource.ReadResponse{State: nullStateOf(t, r)}
+	r.Read(context.Background(), resource.ReadRequest{State: prior}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Read: %v", resp.Diagnostics)
+	}
+	return modelOf[RouteResourceModel](t, resp.State)
+}
+
+// The API stores notify_emails as a list and answers it joined with ", ". A configured value that
+// lists the same addresses in the same order keeps its text after create, refresh and update, so
+// "a,b" shows no diff against the API's "a, b". A different list is real drift and reads back as
+// the API's.
+func TestRouteNotifyEmails_KeepsConfiguredSpacing(t *testing.T) {
+	f := &fakeRouteAPI{t: t, route: baseRouteJSON()}
+	r := &RouteResource{client: testClient(t, f.server())}
+
+	plan := newRoutePlan()
+	plan.NotifyEmails = types.StringValue("ops@example.com,dev@example.com")
+	f.route["notifyEmails"] = "ops@example.com, dev@example.com"
+	st, got := createRoute(t, r, plan)
+	if got.NotifyEmails.ValueString() != "ops@example.com,dev@example.com" {
+		t.Errorf("after create notify_emails = %q, want the configured text", got.NotifyEmails.ValueString())
+	}
+	// The body carries the entries trimmed and joined the way the API joins them.
+	if f.lastCreate["notifyEmails"] != "ops@example.com, dev@example.com" {
+		t.Errorf("create body notifyEmails = %v", f.lastCreate["notifyEmails"])
+	}
+	if got := readRoute(t, r, st); got.NotifyEmails.ValueString() != "ops@example.com,dev@example.com" {
+		t.Errorf("after refresh notify_emails = %q, want the configured text", got.NotifyEmails.ValueString())
+	}
+
+	// Update to one address; the API answers it on its own.
+	next := got
+	next.NotifyEmails = types.StringValue(" ops@example.com ")
+	f.route["notifyEmails"] = "ops@example.com"
+	st, got = updateRouteFrom(t, r, st, next, next)
+	if f.lastPatch["notifyEmails"] != "ops@example.com" {
+		t.Errorf("patch body notifyEmails = %v, want the trimmed address", f.lastPatch["notifyEmails"])
+	}
+	if got.NotifyEmails.ValueString() != " ops@example.com " {
+		t.Errorf("after update notify_emails = %q, want the configured text", got.NotifyEmails.ValueString())
+	}
+
+	// The API keeps only the first of an address listed twice in any letter case. The configured
+	// text lists the same addresses once read that way, so it is kept rather than failing the apply.
+	next = got
+	next.NotifyEmails = types.StringValue("ops@example.com, dev@example.com, OPS@example.com")
+	f.route["notifyEmails"] = "ops@example.com, dev@example.com"
+	st, got = updateRouteFrom(t, r, st, next, next)
+	if f.lastPatch["notifyEmails"] != "ops@example.com, dev@example.com" {
+		t.Errorf("patch body notifyEmails = %v, want the repeat dropped", f.lastPatch["notifyEmails"])
+	}
+	if got.NotifyEmails.ValueString() != "ops@example.com, dev@example.com, OPS@example.com" {
+		t.Errorf("after update with a repeat notify_emails = %q, want the configured text", got.NotifyEmails.ValueString())
+	}
+
+	// Changed outside Terraform: the refresh takes the API's list, so the next plan shows the diff.
+	f.route["notifyEmails"] = "oncall@example.com, ops@example.com"
+	if got := readRoute(t, r, st); got.NotifyEmails.ValueString() != "oncall@example.com, ops@example.com" {
+		t.Errorf("after drift notify_emails = %q, want the API's list", got.NotifyEmails.ValueString())
+	}
+	// The same addresses in another order are drift too: notifications go out in the API's order.
+	f.route["notifyEmails"] = "dev@example.com, ops@example.com"
+	old := got
+	old.NotifyEmails = types.StringValue("ops@example.com,dev@example.com")
+	if got := readRoute(t, r, stateOf(t, r, &old)); got.NotifyEmails.ValueString() != "dev@example.com, ops@example.com" {
+		t.Errorf("reordered notify_emails = %q, want the API's order", got.NotifyEmails.ValueString())
+	}
+}
+
+// Removing notify_emails sends "" (the API's clear value) and reads back null. A configured "" lists
+// no addresses: it is sent as "", and the API's null keeps the configured "" rather than failing the
+// apply with an inconsistent result.
+func TestRouteNotifyEmails_Clearing(t *testing.T) {
+	f := &fakeRouteAPI{t: t, route: baseRouteJSON()}
+	r := &RouteResource{client: testClient(t, f.server())}
+
+	plan := newRoutePlan()
+	plan.NotifyEmails = types.StringValue("ops@example.com")
+	f.route["notifyEmails"] = "ops@example.com"
+	st, applied := createRoute(t, r, plan)
+
+	removed := applied
+	removed.NotifyEmails = types.StringNull()
+	f.route["notifyEmails"] = nil
+	st, got := updateRouteFrom(t, r, st, removed, removed)
+	if v, ok := f.lastPatch["notifyEmails"]; !ok || v != "" {
+		t.Errorf("patch body notifyEmails = %v (present %v), want \"\"", v, ok)
+	}
+	if !got.NotifyEmails.IsNull() {
+		t.Errorf("after removal notify_emails = %v, want null", got.NotifyEmails)
+	}
+
+	// With nothing left to clear, another apply sends nothing.
+	updateRouteFrom(t, r, st, got, got)
+	if v, ok := f.lastPatch["notifyEmails"]; ok {
+		t.Errorf("patch body carried notifyEmails = %v with nothing to clear", v)
+	}
+
+	empty := newRoutePlan()
+	empty.NotifyEmails = types.StringValue("")
+	if _, got := createRoute(t, r, empty); got.NotifyEmails.IsNull() || got.NotifyEmails.ValueString() != "" {
+		t.Errorf("configured \"\" read back as %v, want \"\"", got.NotifyEmails)
+	}
+	if v, ok := f.lastCreate["notifyEmails"]; !ok || v != "" {
+		t.Errorf("create body notifyEmails = %v (present %v), want \"\"", v, ok)
+	}
+}
+
+// An API from before the notify_emails fix answers the column as it is stored: its JSON text in a
+// string, or the JSON array itself. Either reads as the same list instead of failing the refresh
+// or reading the brackets in as addresses.
+func TestRouteNotifyEmails_ReadsStoredArray(t *testing.T) {
+	for name, stored := range map[string]any{
+		"array":     []string{"ops@example.com", "dev@example.com"},
+		"json text": `["ops@example.com", "dev@example.com"]`,
+	} {
+		t.Run(name, func(t *testing.T) { testRouteNotifyEmailsReadsStored(t, stored) })
+	}
+}
+
+func testRouteNotifyEmailsReadsStored(t *testing.T, stored any) {
+	route := baseRouteJSON()
+	route["notifyEmails"] = stored
+	f := &fakeRouteAPI{t: t, route: route}
+	r := &RouteResource{client: testClient(t, f.server())}
+
+	old := newRoutePlan()
+	old.ID = types.StringValue("rt_1")
+	old.CircuitCooldownSeconds, old.CircuitProbeSuccessThreshold, old.CircuitFailureThreshold = types.Int64Null(), types.Int64Null(), types.Int64Null()
+	old.HoldOnCircuitOpen = types.BoolNull()
+	old.CreatedAt, old.UpdatedAt = types.StringNull(), types.StringNull()
+	if got := readRoute(t, r, stateOf(t, r, &old)); got.NotifyEmails.ValueString() != "ops@example.com, dev@example.com" {
+		t.Errorf("notify_emails = %q, want the stored list joined", got.NotifyEmails.ValueString())
+	}
+
+	old.NotifyEmails = types.StringValue("ops@example.com,dev@example.com")
+	if got := readRoute(t, r, stateOf(t, r, &old)); got.NotifyEmails.ValueString() != "ops@example.com,dev@example.com" {
+		t.Errorf("notify_emails = %q, want the prior text kept", got.NotifyEmails.ValueString())
+	}
+}
+
+// Each entry of notify_emails must be an email address at plan time; empty entries and spaces
+// around the commas are allowed.
+func TestRouteNotifyEmails_Validator(t *testing.T) {
+	attr := schemaOf(t, &RouteResource{}).Attributes["notify_emails"].(schema.StringAttribute)
+	if len(attr.Validators) == 0 {
+		t.Fatal("notify_emails has no validator")
+	}
+	validate := func(v types.String) []string {
+		var bad []string
+		for _, val := range attr.Validators {
+			resp := &validator.StringResponse{}
+			val.ValidateString(context.Background(), validator.StringRequest{Path: path.Root("notify_emails"), ConfigValue: v}, resp)
+			for _, d := range resp.Diagnostics.Errors() {
+				bad = append(bad, d.Detail())
+			}
+		}
+		return bad
+	}
+	for _, ok := range []string{
+		"ops@example.com",
+		"ops@example.com,dev@example.com",
+		" ops@example.com ,  first.last+tag@sub.example.co.uk ",
+		"ops@example.com,,dev@example.com,",
+		"",
+	} {
+		if bad := validate(types.StringValue(ok)); len(bad) != 0 {
+			t.Errorf("%q refused: %v", ok, bad)
+		}
+	}
+	for value, want := range map[string]int{
+		"ops":                             1,
+		"ops@example":                     1,
+		"ops@example.com;dev@example.com": 1,
+		"ops@example.com dev@example.com": 1,
+		"Ops <ops@example.com>":           1,
+		"ops@@example.com":                1,
+		"ops@example..com":                1,
+		"a@example.com,bad,also-bad":      2,
+	} {
+		if bad := validate(types.StringValue(value)); len(bad) != want {
+			t.Errorf("%q: %d errors %v, want %d", value, len(bad), bad, want)
+		}
+	}
+	if bad := validate(types.StringUnknown()); len(bad) != 0 {
+		t.Errorf("unknown value refused: %v", bad)
 	}
 }
